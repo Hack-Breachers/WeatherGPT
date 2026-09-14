@@ -1,0 +1,16 @@
+[
+  {
+    "id": "IMD_HEATWAVE_01",
+    "source": "India Meteorological Department (IMD) - Heat Wave Do's and Don'ts",
+    "hazard_types": ["HEATWAVE"],
+    "keywords": [
+      "heatwave",
+      "heat wave",
+      "extreme heat",
+      "hot weather",
+      "heat stress",
+      "dehydration"
+    ],
+    "content": "During extreme heat, stay hydrated and drink water regularly even if you do not feel thirsty. Avoid prolonged exposure to direct sunlight and reduce strenuous outdoor activity during the hottest part of the day. Wear lightweight, loose-fitting clothing and use shade or cooler environments when possible. Check on vulnerable people such as children, older adults and people who may be at increased risk from heat. If symptoms of serious heat illness occur, move to a cool place and seek medical assistance."
+  }
+]

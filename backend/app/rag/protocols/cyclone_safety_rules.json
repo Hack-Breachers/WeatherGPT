@@ -1,0 +1,16 @@
+[
+  {
+    "id": "IMD_CYCLONE_01",
+    "source": "India Meteorological Department (IMD) - Cyclone Do's and Don'ts",
+    "hazard_types": ["CYCLONE"],
+    "keywords": [
+      "cyclone",
+      "cyclonic storm",
+      "landfall",
+      "storm surge",
+      "strong wind",
+      "coastal"
+    ],
+    "content": "Follow official cyclone warnings and evacuation instructions. Secure loose objects around the home, including items that could become airborne. Keep essential emergency supplies, drinking water, medicines, a flashlight and batteries ready. Stay indoors in a strong building during dangerous conditions and keep away from windows. Move away from low-lying coastal areas and areas vulnerable to storm surge or flooding when authorities advise evacuation. Do not delay evacuation when an official evacuation order is issued. Continue monitoring official warnings and advisories."
+  }
+]

@@ -1,0 +1,16 @@
+[
+  {
+    "id": "IMD_HEAVY_RAIN_01",
+    "source": "India Meteorological Department (IMD) - Flood and Heavy Rain Safety Guidance",
+    "hazard_types": ["HEAVY_RAIN", "FORECAST_HEAVY_RAIN"],
+    "keywords": [
+      "heavy rain",
+      "rainfall",
+      "very heavy rain",
+      "extreme rain",
+      "waterlogging",
+      "rain"
+    ],
+    "content": "During heavy rainfall, monitor official weather warnings and avoid unnecessary travel when conditions are dangerous. Do not walk or drive through flowing or waterlogged roads where the depth or current cannot be safely assessed. Stay away from open drains, canals, rivers and other rapidly rising water. If water begins entering a building, move to a safer higher level when necessary and follow official evacuation instructions. Keep essential medicines, drinking water, a flashlight and communication devices available."
+  }
+]

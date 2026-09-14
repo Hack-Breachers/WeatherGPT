@@ -1,0 +1,17 @@
+[
+  {
+    "id": "NDMA_URBAN_FLOOD_01",
+    "source": "National Disaster Management Authority (NDMA) - Urban Flood Safety Guidance",
+    "hazard_types": ["URBAN_FLOOD"],
+    "keywords": [
+      "urban flood",
+      "flood",
+      "inundation",
+      "waterlogging",
+      "drainage",
+      "underpass",
+      "stranded"
+    ],
+    "content": "During urban flooding, avoid flooded roads, underpasses, drains, canals and rapidly flowing water. Do not drive or walk through submerged roads because water depth, currents, open drains and damaged infrastructure may be hidden. Move to safer higher ground or upper levels when flooding threatens the building and follow official evacuation instructions. Keep away from electrical wires and electrical equipment in or near floodwater. If stranded, seek assistance from emergency services and provide your location when possible."
+  }
+]

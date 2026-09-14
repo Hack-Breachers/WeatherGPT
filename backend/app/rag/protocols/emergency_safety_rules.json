@@ -1,0 +1,24 @@
+[
+  {
+    "id": "INDIA_EMERGENCY_112",
+    "source": "Government of India - Emergency Response Support System (ERSS)",
+    "hazard_types": ["EMERGENCY"],
+    "keywords": [
+      "help",
+      "emergency",
+      "sos",
+      "trapped",
+      "stranded",
+      "rescue",
+      "danger",
+      "immediate assistance"
+    ],
+    "emergency_numbers": [
+      {
+        "number": "112",
+        "purpose": "Pan-India emergency assistance"
+      }
+    ],
+    "content": "If you are in immediate danger, move to the safest accessible location if you can do so without increasing your risk. For emergency assistance in India, dial 112. Share your location when possible and follow instructions from emergency responders. Do not enter floodwater, damaged structures or other hazardous areas to attempt a rescue yourself."
+  }
+]

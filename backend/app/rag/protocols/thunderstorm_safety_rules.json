@@ -1,0 +1,28 @@
+[
+  {
+    "id": "IMD_THUNDERSTORM_01",
+    "source": "India Meteorological Department (IMD) - Thunderstorm & Lightning Do's and Don'ts",
+    "hazard_types": ["THUNDERSTORM", "LIGHTNING"],
+    "keywords": [
+      "thunderstorm",
+      "lightning",
+      "thunder",
+      "storm",
+      "squall"
+    ],
+    "content": "If thunder is heard, move indoors or to a safe shelter immediately. Stay indoors and avoid travel if possible. Close windows and doors and secure loose objects outside. Do not take shelter under trees, near metal structures, utility lines, or other objects that conduct electricity. Move away from ponds, lakes and other bodies of water. Avoid using corded phones and unnecessary electrical equipment during the storm. If outdoors without safe shelter, move away from elevated areas, water and isolated objects; do not lie flat on the ground. If travelling during a thunderstorm, get to a safe shelter; if already in a vehicle, remain inside with windows closed and avoid parking near trees or power lines. Stay indoors for 30 minutes after the last clap of thunder."
+  },
+  {
+    "id": "IMD_THUNDERSTORM_02",
+    "source": "India Meteorological Department (IMD) - Thunderstorm Impact and Action Guidance",
+    "hazard_types": ["THUNDERSTORM", "LIGHTNING"],
+    "keywords": [
+      "hail",
+      "gust",
+      "strong wind",
+      "lightning",
+      "thunderstorm"
+    ],
+    "content": "During thunderstorms with lightning, gusty winds or hail, stay indoors, close windows and doors, and avoid travel if possible. Do not take shelter under trees. Do not lie on concrete floors or lean against concrete walls. Unplug electrical and electronic appliances when appropriate. Get out of water bodies immediately and keep away from objects that conduct electricity."
+  }
+]

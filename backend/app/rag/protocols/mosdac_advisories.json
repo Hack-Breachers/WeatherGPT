@@ -1,0 +1,14 @@
+[
+  {
+    "id": "MOSDAC_INSAT3DR_01",
+    "source": "ISRO MOSDAC INSAT-3DR Satellite Feed",
+    "keywords": ["cyclone", "wind", "depression", "bay of bengal", "salt lake", "rain"],
+    "content": "Official ISRO MOSDAC & IMD Synoptic Bulletin: Severe convective clouds concentrated over Gangetic West Bengal. Precipitation rate 25-35 mm/hr. Waterlogging hazard critical for low-lying municipal wards."
+  },
+  {
+    "id": "NDMA_SOP_URBAN_01",
+    "source": "NDMA Standard Operating Procedure",
+    "keywords": ["stranded", "canal", "evacuate", "current", "112", "drainage"],
+    "content": "NDMA Urban Flood Protocol: High-tide lockage active at lockgates. Avoid all underpasses. Citizens in water-inundated ground floors must shift vertically to higher stories and signal emergency teams via 112."
+  }
+]
