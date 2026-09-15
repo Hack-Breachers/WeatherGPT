@@ -5,7 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 class WeatherGPTService {
   // Your PC's Wi-Fi IP address
-  static const String baseUrl = "http://127.0.0.1:8000";
+  static const String baseUrl = "10.223.155.25:8000";
 
   // ===========================================================================
   // 1. GEOLOCATOR: Get Current Device GPS Position

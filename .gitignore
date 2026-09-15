@@ -61,3 +61,13 @@ migrate_working_dir/
 # --- Model files ---
 models/
 *.gguf
+
+
+
+
+
+
+build/
+.dart_tool/
+android/local.properties
+ios/Flutter/ephemeral/
