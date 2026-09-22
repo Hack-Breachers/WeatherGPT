@@ -1,12 +1,17 @@
-import 'dart:convert';
-import 'dart:math' as math;
+﻿import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'widgets/ble_mesh_visualizer.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 import 'services/location_service.dart';
 import 'services/mesh_engine.dart';
+import 'services/weather_cache_service.dart';
 import 'package:flutter/foundation.dart';
 import 'dart:async';
+import 'govt_view.dart';
+import 'package:flutter_phone_direct_caller/flutter_phone_direct_caller.dart';
+import 'package:telephony/telephony.dart';
+
 
 class MainCitizenScreen extends StatefulWidget {
   final VoidCallback? onToggleToGovt;
@@ -22,14 +27,18 @@ class _MainCitizenScreenState extends State<MainCitizenScreen> {
   if (kIsWeb) {
     return 'http://127.0.0.1:8000'; // Chrome / Web
   }
-  return 'http://10.0.2.2:8000';    // Android Emulator (or your LAN IP for physical device)
+  return 'http://10.88.197.212:8000';    // Android Emulator (or your LAN IP for physical device)
 }
 
-  double _currentLat = 22.5726;
-  double _currentLon = 88.3639;
-  String _locationName = "Kolkata, WB";
+  double _currentLat = 0.0;
+  double _currentLon = 0.0;
+  String _locationName = "Detecting location...";
   String _userPhone = "+919876543210"; // Default or loaded from user profile
+  
   bool _isLocating = false;
+  bool _isOnline = false;
+  DateTime? _lastLiveUpdate;
+  DateTime? _lastCachedUpdate;
 
   static const Map<String, String> requestHeaders = {
     'Content-Type': 'application/json',
@@ -37,13 +46,14 @@ class _MainCitizenScreenState extends State<MainCitizenScreen> {
   };
 
   final TextEditingController _queryController = TextEditingController();
+  final ScrollController _chatScrollController = ScrollController();
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   bool _isLoadingChat = false;
   bool _isLoadingWeather = true;
 
-  String _temp = "29°";
-  String _feelsLike = "Feels 33°C";
+  String _temp = "29�";
+  String _feelsLike = "Feels 33�C";
   String _humidity = "88%";
   String _rainProb = "92%";
 
@@ -56,41 +66,222 @@ class _MainCitizenScreenState extends State<MainCitizenScreen> {
 
   String? _aiResponse;
   bool _isGrounded = true;
-  String _functionCall = 'summarize_regional_hazards(radius_km=250)';
 
-  int _nearbyEventCount = 0;
-  int _nearbyHighRiskCount = 0;
-  String _regionalStatus = 'Checking nearby disaster feeds...';
-  List<Map<String, dynamic>> _nearbyEvents = [];
+final List<Map<String, String>> _chatMessages = [];
+bool _isChatExpanded = false;
+
+  String _functionCall = 'regional hazards within 250 km';
+int _nearbyEventCount = 0;
+int _nearbyHighRiskCount = 0;
+String _regionalStatus = 'Checking nearby disaster feeds...';
+List<Map<String, dynamic>> _nearbyEvents = [];
+
+bool _nearbyFeedOnline = false;
+DateTime? _lastNearbyUpdate;
 
   @override
   void initState() {
     super.initState();
-    _fetchLiveWeather();
-    _fetchNearbyDisasterOverview();
-    _aiResponse = 'Regional disaster intelligence is being assembled from nearby event feeds.';
+    _aiResponse = 'Detecting your location and assembling regional disaster intelligence...';
+    _initializeAppLocation();
+
+    // Listen to incoming SOS packets broadcasted across the BLE mesh
+    MeshEngine.onPacketStream.listen((packet) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("?? Relayed SOS from ${packet.phone} (Hop ${packet.hops})"),
+          backgroundColor: const Color(0xFFE11D48),
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    });
+
+    MeshEngine().startMesh(
+      userName: "Citizen_${_userPhone.replaceAll(RegExp(r'\s+'), '')}",
+  onPacketReceived: (packet) {
+    if (!mounted) return;
+
+    debugPrint(
+      "CITIZEN VIEW: Received SOS ${packet.id}",
+    );
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          "?? Relayed SOS from ${packet.phone} "
+          "(Hop ${packet.hops})",
+        ),
+        backgroundColor:
+            const Color(0xFFE11D48),
+        duration:
+            const Duration(seconds: 4),
+      ),
+    );
+  },
+);
   }
 
-  Future<void> _syncDeviceLocation() async {
-    setState(() => _isLocating = true);
-    try {
-      final pos = await LocationService.getCurrentLocation();
-      setState(() {
-        _currentLat = pos.latitude;
-        _currentLon = pos.longitude;
-        _locationName = "${pos.latitude.toStringAsFixed(2)}, ${pos.longitude.toStringAsFixed(2)}";
-        _isLocating = false;
-      });
-      _fetchLiveWeather();
-    } catch (e) {
-      setState(() => _isLocating = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Location error: $e')),
-        );
-      }
+  Future<String> _reverseGeocodeLocation(
+    double latitude,
+    double longitude,
+  ) async {
+  try {
+    final uri = Uri.parse(
+      'https://nominatim.openstreetmap.org/reverse'
+      '?lat=$latitude'
+      '&lon=$longitude'
+      '&format=json'
+      '&zoom=10'
+      '&addressdetails=1',
+    );
+
+    final response = await http.get(
+      uri,
+      headers: {
+        'User-Agent': 'WeatherGPT/1.0',
+      },
+    );
+
+    if (response.statusCode != 200) {
+      return "Your Location";
     }
+
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    final address = data['address'] as Map<String, dynamic>? ?? {};
+
+    final city = address['city'] ??
+        address['town'] ??
+        address['municipality'] ??
+        address['village'] ??
+        address['suburb'];
+
+    final state = address['state'];
+
+    if (city != null && state != null) {
+      return "$city, $state";
+    }
+
+    if (city != null) {
+      return city.toString();
+    }
+
+    if (state != null) {
+      return state.toString();
+    }
+
+    return "Your Location";
+  } catch (e) {
+    debugPrint("Reverse geocoding failed: $e");
+    return "Your Location";
   }
+}
+
+
+
+  Future<void> _initializeAppLocation() async {
+  if (!mounted) return;
+
+  setState(() {
+    _isLocating = true;
+    _isLoadingWeather = true;
+    _locationName = "Detecting location...";
+    _isOnline = false;
+  });
+
+  try {
+    final pos = await LocationService.getCurrentLocation();
+
+    if (!mounted) return;
+
+    setState(() {
+      _currentLat = pos.latitude;
+      _currentLon = pos.longitude;
+    });
+
+    debugPrint(
+      "LOCATION: ${pos.latitude}, ${pos.longitude}",
+    );
+
+    final detectedLocation = await _reverseGeocodeLocation(
+      pos.latitude,
+      pos.longitude,
+    );
+
+    if (!mounted) return;
+
+    setState(() {
+      _locationName = detectedLocation;
+      _isLocating = false;
+    });
+
+    debugPrint(
+      "LOCATION NAME: $detectedLocation",
+    );
+
+    await Future.wait([
+      _fetchLiveWeather(),
+      _fetchNearbyDisasterOverview(),
+    ]);
+  } catch (e) {
+    if (!mounted) return;
+
+    setState(() {
+      _isLocating = false;
+      _isLoadingWeather = false;
+      _isOnline = false;
+      _locationName = "Location unavailable";
+      _overallRisk = "UNKNOWN";
+      _riskHazard = "Weather unavailable";
+      _riskLevel = "UNKNOWN";
+    });
+
+    debugPrint("LOCATION ERROR: $e");
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          "Unable to detect your location: $e",
+        ),
+      ),
+    );
+  }
+}
+
+  Future<void> _syncDeviceLocation() async {
+  if (_isLocating) return;
+
+  setState(() => _isLocating = true);
+
+  try {
+    final pos = await LocationService.getCurrentLocation();
+
+    final detectedLocation = await _reverseGeocodeLocation(
+      pos.latitude,
+      pos.longitude,
+    );
+
+    if (!mounted) return;
+
+    setState(() {
+      _currentLat = pos.latitude;
+      _currentLon = pos.longitude;
+      _locationName = detectedLocation;
+      _isLocating = false;
+    });
+
+    _fetchLiveWeather();
+    _fetchNearbyDisasterOverview();
+  } catch (e) {
+    if (!mounted) return;
+
+    setState(() => _isLocating = false);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Location error: $e')),
+    );
+  }
+}
 
   void _showLocationPickerDialog() {
     final latController = TextEditingController(text: _currentLat.toString());
@@ -126,10 +317,8 @@ class _MainCitizenScreenState extends State<MainCitizenScreen> {
                 const Divider(color: Color(0xFF1E293B)),
                 const Text("Quick Presets", style: TextStyle(color: Colors.grey, fontSize: 13)),
                 const SizedBox(height: 8),
-                _presetTile("New York, USA", 40.7128, -74.0060),
-                _presetTile("Miami, Florida", 25.7617, -80.1918),
-                _presetTile("Los Angeles, California", 34.0522, -118.2437),
                 _presetTile("Kolkata, India", 22.5726, 88.3639),
+                _presetTile("New York, USA", 40.7128, -74.0060),
                 const Divider(color: Color(0xFF1E293B)),
                 const Text("Custom Coordinates", style: TextStyle(color: Colors.grey, fontSize: 13)),
                 const SizedBox(height: 8),
@@ -168,19 +357,41 @@ class _MainCitizenScreenState extends State<MainCitizenScreen> {
                       backgroundColor: const Color(0xFF38BDF8),
                       foregroundColor: Colors.black,
                     ),
-                    onPressed: () {
-                      final lat = double.tryParse(latController.text.trim());
-                      final lon = double.tryParse(lonController.text.trim());
-                      if (lat != null && lon != null) {
-                        Navigator.pop(context);
-                        setState(() {
-                          _currentLat = lat;
-                          _currentLon = lon;
-                          _locationName = "${lat.toStringAsFixed(2)}, ${lon.toStringAsFixed(2)}";
-                        });
-                        _fetchLiveWeather();
-                      }
-                    },
+                    onPressed: () async {
+  final lat = double.tryParse(latController.text.trim());
+  final lon = double.tryParse(lonController.text.trim());
+
+  if (lat == null || lon == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text("Please enter valid latitude and longitude."),
+      ),
+    );
+    return;
+  }
+
+  if (lat < -90 || lat > 90) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text("Latitude must be between -90 and 90."),
+      ),
+    );
+    return;
+  }
+
+  if (lon < -180 || lon > 180) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text("Longitude must be between -180 and 180."),
+      ),
+    );
+    return;
+  }
+
+  Navigator.pop(context);
+
+  await _setManualLocation(lat, lon);
+},
                     child: const Text("Fetch Custom Location Weather"),
                   ),
                 ),
@@ -191,6 +402,88 @@ class _MainCitizenScreenState extends State<MainCitizenScreen> {
       },
     );
   }
+
+  Future<void> _setManualLocation(double lat, double lon) async {
+  if (!mounted) return;
+
+  setState(() {
+    _currentLat = lat;
+    _currentLon = lon;
+    _locationName = "Resolving location...";
+    _isLocating = true;
+    _isLoadingWeather = true;
+  });
+
+  debugPrint("MANUAL LOCATION: $lat, $lon");
+
+  final detectedLocation = await _reverseGeocodeLocation(
+    lat,
+    lon,
+  );
+
+  if (!mounted) return;
+
+  setState(() {
+    _locationName = detectedLocation;
+    _isLocating = false;
+  });
+
+  debugPrint("MANUAL LOCATION NAME: $detectedLocation");
+
+  await Future.wait([
+    _fetchLiveWeather(),
+    _fetchNearbyDisasterOverview(),
+  ]);
+}
+
+  Widget _buildConnectionIndicator() {
+  final bool live = _isOnline;
+
+  return Container(
+    padding: const EdgeInsets.symmetric(
+      horizontal: 8,
+      vertical: 4,
+    ),
+    decoration: BoxDecoration(
+      borderRadius: BorderRadius.circular(20),
+      color: live
+          ? Colors.green.withOpacity(0.12)
+          : Colors.orange.withOpacity(0.12),
+      border: Border.all(
+        color: live
+            ? Colors.green.withOpacity(0.35)
+            : Colors.orange.withOpacity(0.35),
+      ),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 6,
+          height: 6,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: live
+                ? Colors.greenAccent
+                : Colors.orangeAccent,
+          ),
+        ),
+        const SizedBox(width: 5),
+        Text(
+          live ? "LIVE" : "OFFLINE",
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.5,
+            color: live
+                ? Colors.greenAccent
+                : Colors.orangeAccent,
+          ),
+        ),
+      ],
+    ),
+  );
+}
 
   Widget _presetTile(String name, double lat, double lon) {
     return ListTile(
@@ -206,72 +499,266 @@ class _MainCitizenScreenState extends State<MainCitizenScreen> {
           _locationName = name;
         });
         _fetchLiveWeather();
+        _fetchNearbyDisasterOverview();
       },
     );
   }
 
   Future<void> _fetchLiveWeather() async {
-    try {
-      final res = await http.get(
-        Uri.parse('$baseUrl/api/v1/weather?lat=$_currentLat&lon=$_currentLon'),
-        headers: requestHeaders,
+  try {
+    final res = await http.get(
+      Uri.parse(
+        '$baseUrl/api/v1/weather'
+        '?latitude=$_currentLat'
+        '&longitude=$_currentLon',
+      ),
+      headers: requestHeaders,
+    );
+
+    if (res.statusCode != 200) {
+      throw Exception(
+        "Weather API returned ${res.statusCode}",
       );
-      if (res.statusCode != 200) throw Exception("Weather API returned ${res.statusCode}");
+    }
 
-      final data = jsonDecode(res.body) as Map<String, dynamic>;
-      final risk = data['risk'] is Map ? Map<String, dynamic>.from(data['risk']) : <String, dynamic>{};
-      final hazards = risk['hazards'] is List ? List<dynamic>.from(risk['hazards']) : <dynamic>[];
+    final data =
+        jsonDecode(res.body) as Map<String, dynamic>;
 
-      String hazardType = "No active hazard";
+    if (!mounted) return;
+
+    setState(() {
+      _isOnline = true;
+      _lastLiveUpdate = DateTime.now();
+      _lastCachedUpdate = null;
+    });
+
+    await WeatherCacheService.saveWeather(
+      weatherData: data,
+      latitude: _currentLat,
+      longitude: _currentLon,
+      locationName: _locationName,
+    );
+
+    final risk = data['risk'] is Map
+        ? Map<String, dynamic>.from(data['risk'])
+        : <String, dynamic>{};
+
+    final hazards = risk['hazards'] is List
+        ? List<dynamic>.from(risk['hazards'])
+        : <dynamic>[];
+
+    String hazardType = "No active hazard";
+    String hazardLevel = "LOW";
+
+    if (hazards.isNotEmpty &&
+        hazards.first is Map) {
+      final firstHazard =
+          Map<String, dynamic>.from(
+        hazards.first,
+      );
+
+      hazardType =
+          firstHazard['type']?.toString() ??
+              "Unknown hazard";
+
+      hazardLevel =
+          firstHazard['level']?.toString() ??
+              "UNKNOWN";
+    }
+
+    final summary =
+        risk['forecast_summary'] is Map
+            ? Map<String, dynamic>.from(
+                risk['forecast_summary'],
+              )
+            : <String, dynamic>{};
+
+    if (!mounted) return;
+
+    setState(() {
+      _temp =
+          data['temp']?.toString() ?? "-";
+
+      _humidity =
+          data['humidity']?.toString() ?? "-";
+
+      _rainProb =
+          data['rain_prob']?.toString() ?? "-";
+
+      _feelsLike =
+          "Feels ${data['apparent_temperature']?.toString() ?? '-'}";
+
+      _overallRisk =
+          risk['overall_risk']?.toString() ??
+              "UNKNOWN";
+
+      _riskHazard = hazardType;
+      _riskLevel = hazardLevel;
+
+      _maxRainProbability =
+          (summary['max_rain_probability']
+                      as num?)
+                  ?.round() ??
+              0;
+
+      _forecastPrecipitation =
+          (summary['total_precipitation']
+                      as num?)
+                  ?.toDouble() ??
+              0.0;
+
+      _highProbabilityHours =
+          (summary['high_probability_hours']
+                      as num?)
+                  ?.toInt() ??
+              0;
+
+      _isLoadingWeather = false;
+    });
+
+    debugPrint(
+      "LIVE WEATHER: Updated successfully.",
+    );
+  } catch (e) {
+    debugPrint(
+      "LIVE WEATHER FAILED: $e",
+    );
+
+    final cachedData =
+        await WeatherCacheService.loadWeather();
+
+    if (cachedData != null && mounted) {
+      _lastCachedUpdate =
+          await WeatherCacheService
+              .getLastUpdated();
+
+      final cachedRisk =
+          cachedData['risk'] is Map
+              ? Map<String, dynamic>.from(
+                  cachedData['risk'],
+                )
+              : <String, dynamic>{};
+
+      final cachedHazards =
+          cachedRisk['hazards'] is List
+              ? List<dynamic>.from(
+                  cachedRisk['hazards'],
+                )
+              : <dynamic>[];
+
+      String hazardType =
+          "No active hazard";
+
       String hazardLevel = "LOW";
-      if (hazards.isNotEmpty && hazards.first is Map) {
-        final firstHazard = Map<String, dynamic>.from(hazards.first);
-        hazardType = firstHazard['type']?.toString() ?? "Unknown hazard";
-        hazardLevel = firstHazard['level']?.toString() ?? "UNKNOWN";
+
+      if (cachedHazards.isNotEmpty &&
+          cachedHazards.first is Map) {
+        final firstHazard =
+            Map<String, dynamic>.from(
+          cachedHazards.first,
+        );
+
+        hazardType =
+            firstHazard['type']?.toString() ??
+                "Unknown hazard";
+
+        hazardLevel =
+            firstHazard['level']?.toString() ??
+                "UNKNOWN";
       }
 
-      final summary = risk['forecast_summary'] is Map ? Map<String, dynamic>.from(risk['forecast_summary']) : <String, dynamic>{};
+      final cachedSummary =
+          cachedRisk['forecast_summary'] is Map
+              ? Map<String, dynamic>.from(
+                  cachedRisk[
+                      'forecast_summary'],
+                )
+              : <String, dynamic>{};
 
       setState(() {
-        _temp = data['temp']?.toString() ?? "-";
-        _humidity = data['humidity']?.toString() ?? "-";
-        _rainProb = data['rain_prob']?.toString() ?? "-";
-        _feelsLike = "Feels ${data['apparent_temperature']?.toString() ?? '-'}";
-        _overallRisk = risk['overall_risk']?.toString() ?? "UNKNOWN";
+        _isOnline = false;
+
+        _temp =
+            cachedData['temp']?.toString() ??
+                "-";
+
+        _humidity =
+            cachedData['humidity']?.toString() ??
+                "-";
+
+        _rainProb =
+            cachedData['rain_prob']?.toString() ??
+                "-";
+
+        _feelsLike =
+            "Feels ${cachedData['apparent_temperature']?.toString() ?? '-'}";
+
+        _overallRisk =
+            cachedRisk['overall_risk']
+                    ?.toString() ??
+                "UNKNOWN";
+
         _riskHazard = hazardType;
         _riskLevel = hazardLevel;
-        _maxRainProbability = (summary['max_rain_probability'] as num?)?.round() ?? 0;
-        _forecastPrecipitation = (summary['total_precipitation'] as num?)?.toDouble() ?? 0.0;
-        _highProbabilityHours = (summary['high_probability_hours'] as num?)?.toInt() ?? 0;
+
+        _maxRainProbability =
+            (cachedSummary[
+                        'max_rain_probability']
+                    as num?)
+                ?.round() ??
+            0;
+
+        _forecastPrecipitation =
+            (cachedSummary[
+                        'total_precipitation']
+                    as num?)
+                ?.toDouble() ??
+            0.0;
+
+        _highProbabilityHours =
+            (cachedSummary[
+                        'high_probability_hours']
+                    as num?)
+                ?.toInt() ??
+            0;
+
         _isLoadingWeather = false;
       });
-    } catch (_) {
+
+      debugPrint(
+        "OFFLINE: Loaded cached weather successfully.",
+      );
+    } else if (mounted) {
       setState(() {
+        _isOnline = false;
         _isLoadingWeather = false;
+
         _overallRisk = "UNKNOWN";
-        _riskHazard = "Weather unavailable";
+        _riskHazard =
+            "Weather unavailable";
         _riskLevel = "UNKNOWN";
+
         _maxRainProbability = 0;
         _forecastPrecipitation = 0.0;
         _highProbabilityHours = 0;
       });
+
+      debugPrint(
+        "OFFLINE: No cached weather available.",
+      );
     }
   }
-
-  double distanceKm(double lat1, double lon1, double lat2, double lon2) {
-    const earthRadiusKm = 6371.0;
-    final dLat = (lat2 - lat1) * math.pi / 180.0;
-    final dLon = (lon2 - lon1) * math.pi / 180.0;
-    final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
-        math.cos(lat1 * math.pi / 180.0) * math.cos(lat2 * math.pi / 180.0) * math.sin(dLon / 2) * math.sin(dLon / 2);
-    final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
-    return earthRadiusKm * c;
-  }
+}
 
   Future<void> _fetchNearbyDisasterOverview() async {
     try {
       final res = await http.get(
-        Uri.parse('$baseUrl/api/disaster-events/'),
+        Uri.parse(
+          '$baseUrl/api/disaster-events/nearby'
+          '?latitude=$_currentLat'
+          '&longitude=$_currentLon'
+          '&radius_km=250',
+        ),
         headers: requestHeaders,
       );
       if (res.statusCode != 200) throw Exception('Disaster API returned ${res.statusCode}');
@@ -280,26 +767,13 @@ class _MainCitizenScreenState extends State<MainCitizenScreen> {
       if (decoded is! List) throw Exception('Invalid disaster response');
 
       final nearby = <Map<String, dynamic>>[];
+
       for (final item in decoded) {
         if (item is! Map) continue;
-        final event = Map<String, dynamic>.from(item);
-        final lat = (event['latitude'] as num?)?.toDouble();
-        final lon = (event['longitude'] as num?)?.toDouble();
-        if (lat == null || lon == null) continue;
-        final distance = distanceKm(22.5726, 88.3639, lat, lon);
-        if (distance <= 250) {
-          event['distance_km'] = distance;
-          nearby.add(event);
-        }
-      }
 
-      nearby.sort((a, b) {
-        const priority = {'CRITICAL': 4, 'HIGH': 3, 'MEDIUM': 2, 'LOW': 1};
-        final ar = priority[a['severity']?.toString().toUpperCase()] ?? 0;
-        final br = priority[b['severity']?.toString().toUpperCase()] ?? 0;
-        if (ar != br) return br.compareTo(ar);
-        return ((a['distance_km'] as num?)?.toDouble() ?? 9999).compareTo((b['distance_km'] as num?)?.toDouble() ?? 9999);
-      });
+        final event = Map<String, dynamic>.from(item);
+        nearby.add(event);
+      }
 
       final highRisk = nearby.where((event) {
         final severity = event['severity']?.toString().toUpperCase();
@@ -311,13 +785,16 @@ class _MainCitizenScreenState extends State<MainCitizenScreen> {
         _nearbyEvents = nearby.take(3).toList();
         _nearbyEventCount = nearby.length;
         _nearbyHighRiskCount = highRisk;
+        _nearbyFeedOnline = true;
+        _lastNearbyUpdate = DateTime.now();
         _regionalStatus = nearby.isEmpty
-            ? 'No nearby disaster events are currently loaded.'
-            : '$highRisk high-priority event${highRisk == 1 ? '' : 's'} within 250 km.';
+        ? 'No nearby disaster events are currently loaded.'
+        : '$highRisk high-priority event${highRisk == 1 ? '' : 's'} within 250 km.';
       });
     } catch (_) {
       if (!mounted) return;
       setState(() {
+        _nearbyFeedOnline = false;
         _nearbyEvents = [];
         _nearbyEventCount = 0;
         _nearbyHighRiskCount = 0;
@@ -399,6 +876,16 @@ class _MainCitizenScreenState extends State<MainCitizenScreen> {
 
   Future<void> _sendChatQuery(String query) async {
     if (query.trim().isEmpty) return;
+    final userQuery = query.trim();
+    setState(() {
+      _chatMessages.add({
+        'role': 'user',
+        'content': userQuery,
+      });
+      _queryController.clear();
+      _isChatExpanded = true;
+    });
+    _scrollChatToLatest();
     setState(() {
       _isLoadingChat = true;
       _aiResponse = 'Analyzing your request with the latest available weather and hazard data...';
@@ -409,7 +896,6 @@ class _MainCitizenScreenState extends State<MainCitizenScreen> {
         headers: requestHeaders,
         body: jsonEncode({
           'query': query,
-          'city': query,
           'latitude': _currentLat,
           'longitude': _currentLon,
         }),
@@ -418,10 +904,15 @@ class _MainCitizenScreenState extends State<MainCitizenScreen> {
         final data = jsonDecode(res.body);
         setState(() {
           _aiResponse = data['reply'] ?? data['response'];
+          _chatMessages.add({
+            'role': 'assistant',
+            'content': _aiResponse ?? '',
+          });
           _isGrounded = data['grounded'] ?? true;
           _functionCall = data['call'] ?? 'analyze_weather_risk(location="${data['location'] ?? _locationName}", window="6h")';
           _isLoadingChat = false;
         });
+        _scrollChatToLatest();
       } else {
         throw Exception("Status ${res.statusCode}");
       }
@@ -433,6 +924,18 @@ class _MainCitizenScreenState extends State<MainCitizenScreen> {
       });
     }
   }
+
+  void _scrollChatToLatest() {
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    if (!_chatScrollController.hasClients) return;
+
+    _chatScrollController.animateTo(
+      _chatScrollController.position.maxScrollExtent,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOut,
+    );
+  });
+}
 
   void openSOSModal() {
     showModalBottomSheet(
@@ -533,71 +1036,55 @@ class _MainCitizenScreenState extends State<MainCitizenScreen> {
   }
 
   Widget _buildHeader() {
-    return Row(
-      children: [
-        Container(
-          padding: const EdgeInsets.all(6),
-          decoration: BoxDecoration(
-            color: const Color(0xFF38BDF8).withOpacity(0.15),
-            shape: BoxShape.circle,
-          ),
-          child: const Icon(Icons.waves, color: Color(0xFF38BDF8), size: 18),
+  return Row(
+    children: [
+      Container(
+        padding: const EdgeInsets.all(6),
+        decoration: BoxDecoration(
+          color: const Color(0xFF38BDF8).withOpacity(0.15),
+          shape: BoxShape.circle,
         ),
-        const SizedBox(width: 8),
-        const Expanded(
-          child: Text(
-            "WeatherGPT",
-            style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white),
-            overflow: TextOverflow.ellipsis,
-          ),
+        child: const Icon(
+          Icons.waves,
+          color: Color(0xFF38BDF8),
+          size: 18,
         ),
-        const SizedBox(width: 6),
-        Container(
-          padding: const EdgeInsets.all(2),
-          decoration: BoxDecoration(
-            color: const Color(0xFF0F172A),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: const Color(0xFF1E293B)),
+      ),
+
+      const SizedBox(width: 8),
+
+      const Expanded(
+        child: Text(
+          "WeatherGPT",
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF0284C7),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: const Text(
-                  "Citizen",
-                  style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.white),
-                ),
-              ),
-              InkWell(
-                onTap: widget.onToggleToGovt,
-                child: const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 5),
-                  child: Text(
-                    "Govt",
-                    style: TextStyle(fontSize: 10, color: Colors.grey),
-                  ),
-                ),
-              ),
-            ],
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
+
+      // LIVE / OFFLINE indicator
+      _buildConnectionIndicator(),
+
+      const SizedBox(width: 6),
+
+      InkWell(
+        onTap: () => _scaffoldKey.currentState?.openEndDrawer(),
+        borderRadius: BorderRadius.circular(20),
+        child: const Padding(
+          padding: EdgeInsets.all(6),
+          child: Icon(
+            Icons.menu,
+            color: Colors.white70,
+            size: 28,
           ),
         ),
-        const SizedBox(width: 2),
-        InkWell(
-          onTap: () => _scaffoldKey.currentState?.openEndDrawer(),
-          borderRadius: BorderRadius.circular(20),
-          child: const Padding(
-            padding: EdgeInsets.all(6),
-            child: Icon(Icons.menu, color: Colors.white70, size: 22),
-          ),
-        ),
-      ],
-    );
-  }
+      ),
+    ],
+  );
+}
 
   Widget _buildLocationSelector() {
     return Center(
@@ -634,54 +1121,273 @@ class _MainCitizenScreenState extends State<MainCitizenScreen> {
   }
 
   Widget _buildSearchInput() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-      decoration: BoxDecoration(
-        color: const Color(0xFF0F172A),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFF1E293B)),
+  return AnimatedContainer(
+    duration: const Duration(milliseconds: 250),
+    curve: Curves.easeOut,
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: const Color(0xFF0F172A),
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(
+        color: _isChatExpanded
+            ? const Color(0xFF0284C7)
+            : const Color(0xFF1E293B),
       ),
-      child: Row(
-        children: [
-          Expanded(
-            child: TextField(
-              controller: _queryController,
-              style: const TextStyle(fontSize: 13, color: Colors.white),
-              decoration: const InputDecoration(
-                hintText: "Text something (e.g., 'Will it flood in Salt Lake tonight?')",
-                hintStyle: TextStyle(color: Color(0xFF64748B), fontSize: 12),
-                border: InputBorder.none,
+    ),
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Chat header
+        Row(
+          children: [
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: const Color(0xFF0284C7).withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(10),
               ),
-              onSubmitted: _sendChatQuery,
+              child: const Icon(
+                Icons.auto_awesome,
+                color: Color(0xFF38BDF8),
+                size: 17,
+              ),
             ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.mic_none, color: Color(0xFF64748B), size: 20),
-            onPressed: () {},
-          ),
+            const SizedBox(width: 10),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    "WeatherGPT",
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  SizedBox(height: 2),
+                  Text(
+                    "AI weather & safety assistant",
+                    style: TextStyle(
+                      color: Color(0xFF64748B),
+                      fontSize: 10,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              icon: Icon(
+                _isChatExpanded
+                    ? Icons.keyboard_arrow_down
+                    : Icons.keyboard_arrow_up,
+                color: const Color(0xFF64748B),
+                size: 20,
+              ),
+              onPressed: () {
+                setState(() {
+                  _isChatExpanded = !_isChatExpanded;
+                });
+              },
+            ),
+          ],
+        ),
+
+        // Conversation history
+        if (_isChatExpanded && _chatMessages.isNotEmpty) ...[
+          const SizedBox(height: 10),
           Container(
-            decoration: BoxDecoration(
-              color: const Color(0xFF0284C7),
-              borderRadius: BorderRadius.circular(8),
+            constraints: const BoxConstraints(
+              maxHeight: 260,
             ),
-            child: IconButton(
-              icon: _isLoadingChat
-                  ? const SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                    )
-                  : const Icon(Icons.navigation, color: Colors.white, size: 15),
-              onPressed: () => _sendChatQuery(_queryController.text),
+            child: ListView.builder(
+              controller: _chatScrollController,
+              shrinkWrap: true,
+              itemCount: _chatMessages.length,
+              itemBuilder: (context, index) {
+                final message = _chatMessages[index];
+                final isUser = message['role'] == 'user';
+
+                return Align(
+                  alignment:
+                      isUser ? Alignment.centerRight : Alignment.centerLeft,
+                  child: Container(
+                    constraints: const BoxConstraints(
+                      maxWidth: 300,
+                    ),
+                    margin: const EdgeInsets.only(bottom: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 9,
+                    ),
+                    decoration: BoxDecoration(
+                      color: isUser
+                          ? const Color(0xFF0284C7)
+                          : const Color(0xFF070D18),
+                      borderRadius: BorderRadius.only(
+                        topLeft: const Radius.circular(12),
+                        topRight: const Radius.circular(12),
+                        bottomLeft: Radius.circular(isUser ? 12 : 3),
+                        bottomRight: Radius.circular(isUser ? 3 : 12),
+                      ),
+                      border: isUser
+                          ? null
+                          : Border.all(
+                              color: const Color(0xFF1E293B),
+                            ),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (!isUser) ...[
+                          const Icon(
+                            Icons.auto_awesome,
+                            size: 13,
+                            color: Color(0xFF38BDF8),
+                          ),
+                          const SizedBox(width: 7),
+                        ],
+                        Expanded(
+                          child: Text(
+                            message['content'] ?? '',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              height: 1.4,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
             ),
           ),
         ],
-      ),
-    );
-  }
+
+        if (_isChatExpanded && _isLoadingChat) ...[
+          const SizedBox(height: 6),
+          const Align(
+            alignment: Alignment.centerLeft,
+            child: Padding(
+              padding: EdgeInsets.only(left: 4),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 12,
+                    height: 12,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 1.5,
+                      color: Color(0xFF38BDF8),
+                    ),
+                  ),
+                  SizedBox(width: 8),
+                  Text(
+                    "Analyzing weather and hazard data...",
+                    style: TextStyle(
+                      color: Color(0xFF64748B),
+                      fontSize: 10,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+
+        const SizedBox(height: 8),
+
+        // Input area
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _queryController,
+                minLines: 1,
+                maxLines: 3,
+                textInputAction: TextInputAction.send,
+                style: const TextStyle(
+                  fontSize: 13,
+                  color: Colors.white,
+                ),
+                decoration: const InputDecoration(
+                  hintText: "Ask about your weather or safety...",
+                  hintStyle: TextStyle(
+                    color: Color(0xFF64748B),
+                    fontSize: 12,
+                  ),
+                  border: InputBorder.none,
+                  isDense: true,
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: 4,
+                    vertical: 8,
+                  ),
+                ),
+                onTap: () {
+                  if (!_isChatExpanded) {
+                    setState(() {
+                      _isChatExpanded = true;
+                    });
+                  }
+                },
+                onSubmitted: _sendChatQuery,
+              ),
+            ),
+
+            // Microphone
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(
+                Icons.mic_none,
+                color: Color(0xFF64748B),
+                size: 20,
+              ),
+              onPressed: () {},
+            ),
+
+            // Send
+            Container(
+              decoration: BoxDecoration(
+                color: _isLoadingChat
+                    ? const Color(0xFF334155)
+                    : const Color(0xFF0284C7),
+                borderRadius: BorderRadius.circular(9),
+              ),
+              child: IconButton(
+                visualDensity: VisualDensity.compact,
+                icon: _isLoadingChat
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(
+                        Icons.arrow_upward,
+                        color: Colors.white,
+                        size: 17,
+                      ),
+                onPressed: _isLoadingChat
+                    ? null
+                    : () => _sendChatQuery(_queryController.text),
+              ),
+            ),
+          ],
+        ),
+      ],
+    ),
+  );
+}
 
   Widget _buildSuggestions() {
-    final suggestions = ["Rain forecast", "Flood alerts", "Farmer crop advisory", "Emergency shelters"];
+    final suggestions = ["Rain forecast","Thunderstorm warnings","Emergency shelters","Flood alerts"];
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: Row(
@@ -705,94 +1411,450 @@ class _MainCitizenScreenState extends State<MainCitizenScreen> {
     );
   }
 
-  Widget _buildAIIntelligenceCard() {
+String _formatUpdateTime(DateTime time) {
+  final hour = time.hour % 12 == 0 ? 12 : time.hour % 12;
+  final minute = time.minute.toString().padLeft(2, '0');
+  final period = time.hour >= 12 ? 'PM' : 'AM';
+
+  return '$hour:$minute $period';
+}
+
+    Widget _buildAIIntelligenceCard() {
     final bool hasEvents = _nearbyEvents.isNotEmpty;
+    final bool isLive = _nearbyFeedOnline;
+
     return Container(
+      width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: const Color(0xFF0F172A),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFF1E293B)),
+        border: Border.all(
+          color: const Color(0xFF1E293B),
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                children: const [
-                  Text('WeatherGPT', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Color(0xFF38BDF8))),
-                  Text(' · live analysis', style: TextStyle(fontSize: 12, color: Colors.grey)),
-                ],
-              ),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                width: 38,
+                height: 38,
                 decoration: BoxDecoration(
-                  color: _isGrounded ? const Color(0xFF064E3B).withOpacity(0.5) : const Color(0xFF78350F).withOpacity(0.5),
-                  borderRadius: BorderRadius.circular(12),
+                  color: const Color(0xFF0284C7).withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(11),
+                ),
+                child: const Icon(
+                  Icons.my_location,
+                  color: Color(0xFF38BDF8),
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 10),
+
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'REGIONAL HAZARD MONITOR',
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white,
+                        letterSpacing: 0.3,
+                      ),
+                    ),
+                    SizedBox(height: 3),
+                    Text(
+                      'Live regional event feed � 250 km radius',
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: Color(0xFF64748B),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 9,
+                  vertical: 5,
+                ),
+                decoration: BoxDecoration(
+                  color: isLive
+                      ? const Color(0xFF064E3B).withValues(alpha: 0.5)
+                      : const Color(0xFF78350F).withValues(alpha: 0.35),
+                  borderRadius: BorderRadius.circular(16),
                   border: Border.all(
-                    color: _isGrounded ? const Color(0xFF059669).withOpacity(0.6) : const Color(0xFFD97706).withOpacity(0.6),
+                    color: isLive
+                        ? const Color(0xFF059669).withValues(alpha: 0.6)
+                        : const Color(0xFFD97706).withValues(alpha: 0.5),
                   ),
                 ),
-                child: Text(
-                  _isGrounded ? 'Grounded' : 'Live Feed',
-                  style: TextStyle(
-                    color: _isGrounded ? const Color(0xFF34D399) : const Color(0xFFFBBF24),
-                    fontSize: 10,
-                    fontWeight: FontWeight.w600,
-                  ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 7,
+                      height: 7,
+                      decoration: BoxDecoration(
+                        color: isLive
+                            ? const Color(0xFF34D399)
+                            : const Color(0xFFF59E0B),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 5),
+                    Text(
+                      isLive ? 'LIVE' : 'OFFLINE',
+                      style: TextStyle(
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w700,
+                        color: isLive
+                            ? const Color(0xFF34D399)
+                            : const Color(0xFFFBBF24),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          Text(_functionCall, style: const TextStyle(fontFamily: 'monospace', fontSize: 10.5, color: Color(0xFF64748B))),
-          const SizedBox(height: 10),
-          Text(
-            _isLoadingChat
-                ? 'Analyzing the latest available regional information...'
-                : (_aiResponse ?? (hasEvents ? 'Regional situation: $_nearbyEventCount nearby disaster events detected.' : _regionalStatus)),
-            style: const TextStyle(fontSize: 12.5, color: Colors.white, height: 1.4),
+
+          const SizedBox(height: 18),
+
+          const Divider(
+            color: Color(0xFF1E293B),
+            height: 1,
           ),
+
           const SizedBox(height: 14),
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: const Color(0xFF070D18),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: const Color(0xFF1E293B)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+
+          if (hasEvents) ...[
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Row(
-                  children: const [
-                    Icon(Icons.location_searching, size: 14, color: Color(0xFF38BDF8)),
-                    SizedBox(width: 6),
-                    Text('Nearby situation 250 km', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: Colors.white70)),
-                  ],
+                const Text(
+                  'Nearby events',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
+                  ),
                 ),
-                const SizedBox(height: 10),
-                if (hasEvents)
-                  ..._nearbyEvents.map((event) {
-                    final severity = event['severity']?.toString().toUpperCase() ?? 'UNKNOWN';
-                    final distance = (event['distance_km'] as num?)?.toDouble() ?? 0;
-                    final title = event['title']?.toString() ?? 'Unnamed event';
-                    final hazard = event['hazard_type']?.toString() ?? 'Hazard';
-                    return _regionalEventRow(title, '$hazard ${distance.toStringAsFixed(0)} km', severity);
-                  })
-                else ...[
-                  _regionalEventRow('Disaster events', '0 currently loaded', 'CLEAR'),
-                  const SizedBox(height: 3),
-                  Text(_regionalStatus, style: const TextStyle(fontSize: 10.5, color: Colors.white54)),
-                ],
+                Text(
+                  '${_nearbyEventCount} found',
+                  style: const TextStyle(
+                    fontSize: 10.5,
+                    color: Color(0xFF94A3B8),
+                  ),
+                ),
               ],
             ),
+
+            const SizedBox(height: 10),
+
+            ..._nearbyEvents.map(
+              (event) => _buildRegionalEventCard(event),
+            ),
+          ] else ...[
+            const SizedBox(height: 8),
+
+            const Center(
+              child: Icon(
+                Icons.check_circle_outline,
+                color: Color(0xFF34D399),
+                size: 42,
+              ),
+            ),
+
+            const SizedBox(height: 10),
+
+            const Center(
+              child: Text(
+                'No nearby hazards detected',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 6),
+
+            Center(
+              child: Text(
+                isLive
+                    ? 'Monitoring a 250 km radius around your location'
+                    : 'Regional hazard feed is currently unavailable',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: Color(0xFF94A3B8),
+                  height: 1.4,
+                ),
+              ),
+            ),
+          ],
+
+          const SizedBox(height: 16),
+
+          const Divider(
+            color: Color(0xFF1E293B),
+            height: 1,
+          ),
+
+          const SizedBox(height: 12),
+
+          Row(
+            children: [
+              const Icon(
+                Icons.location_on_outlined,
+                size: 22,
+                color: Color(0xFF38BDF8),
+              ),
+              const SizedBox(width: 8),
+
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Coverage radius',
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: Color(0xFF94A3B8),
+                      ),
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      '250 km',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              const Icon(
+                Icons.access_time,
+                size: 20,
+                color: Color(0xFF94A3B8),
+              ),
+              const SizedBox(width: 8),
+
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Last checked',
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: Color(0xFF94A3B8),
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      _lastNearbyUpdate != null
+                          ? _formatUpdateTime(_lastNearbyUpdate!)
+                          : 'Not checked',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ],
       ),
     );
+  }
+
+    Widget _buildRegionalEventCard(Map<String, dynamic> event) {
+    final severity =
+        event['severity']?.toString().toUpperCase() ?? 'UNKNOWN';
+
+    final distance =
+        (event['distance_km'] as num?)?.toDouble() ?? 0;
+
+    final title =
+        event['title']?.toString() ?? 'Unnamed event';
+
+    final hazard =
+        event['hazard_type']?.toString() ?? 'Hazard';
+
+    final source =
+        event['source']?.toString() ?? 'Regional feed';
+
+    Color accent;
+
+    switch (severity) {
+      case 'CRITICAL':
+      case 'HIGH':
+        accent = const Color(0xFFF43F5E);
+        break;
+      case 'MEDIUM':
+        accent = const Color(0xFFF59E0B);
+        break;
+      case 'LOW':
+        accent = const Color(0xFF10B981);
+        break;
+      default:
+        accent = const Color(0xFF64748B);
+    }
+
+    final hazardLower = hazard.toLowerCase();
+
+    IconData icon;
+
+    if (hazardLower.contains('thunder') ||
+        hazardLower.contains('lightning')) {
+      icon = Icons.thunderstorm;
+    } else if (hazardLower.contains('rain') ||
+        hazardLower.contains('flood') ||
+        hazardLower.contains('water')) {
+      icon = Icons.cloud;
+    } else if (hazardLower.contains('cyclone') ||
+        hazardLower.contains('storm')) {
+      icon = Icons.cyclone;
+    } else if (hazardLower.contains('heat')) {
+      icon = Icons.wb_sunny_outlined;
+    } else if (hazardLower.contains('fire')) {
+      icon = Icons.local_fire_department_outlined;
+    } else {
+      icon = Icons.warning_amber_rounded;
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(
+        horizontal: 12,
+        vertical: 10,
+      ),
+      decoration: BoxDecoration(
+        color: const Color(0xFF111B2E),
+        borderRadius: BorderRadius.circular(11),
+        border: Border.all(
+          color: const Color(0xFF1E293B),
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 3,
+            height: 42,
+            decoration: BoxDecoration(
+              color: accent,
+              borderRadius: BorderRadius.circular(3),
+            ),
+          ),
+
+          const SizedBox(width: 10),
+
+          Icon(
+            icon,
+            color: accent,
+            size: 25,
+          ),
+
+          const SizedBox(width: 10),
+
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  '${_formatHazardLabel(hazard)} � $source',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 9.5,
+                    color: Color(0xFF94A3B8),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(width: 8),
+
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                '${distance.toStringAsFixed(0)} km',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFFCBD5E1),
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                _formatSeverity(severity),
+                style: TextStyle(
+                  fontSize: 9,
+                  fontWeight: FontWeight.w700,
+                  color: accent,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatHazardLabel(String hazard) {
+    return hazard
+        .replaceAll('_', ' ')
+        .split(' ')
+        .where((word) => word.isNotEmpty)
+        .map(
+          (word) =>
+              '${word[0].toUpperCase()}${word.substring(1).toLowerCase()}',
+        )
+        .join(' ');
+  }
+
+  String _formatSeverity(String severity) {
+    switch (severity) {
+      case 'CRITICAL':
+        return 'Critical';
+      case 'HIGH':
+        return 'High';
+      case 'MEDIUM':
+        return 'Medium';
+      case 'LOW':
+        return 'Low';
+      default:
+        return 'Unknown';
+    }
   }
 
   Widget _regionalEventRow(String title, String subtitle, String level) {
@@ -871,7 +1933,7 @@ class _MainCitizenScreenState extends State<MainCitizenScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              MetricStat(val: _rainProb, label: "current rain"),
+              MetricStat(val: _rainProb, label: "current rain prob."),
               MetricStat(val: "$_maxRainProbability%", label: "next 6h max"),
               MetricStat(val: _overallRisk, label: "overall risk"),
             ],
@@ -885,71 +1947,141 @@ class _MainCitizenScreenState extends State<MainCitizenScreen> {
     );
   }
 
+bool _hasVerifiedRainHazard() {
+  return _riskHazard == "HEAVY_RAIN" ||
+      _riskHazard == "FORECAST_HEAVY_RAIN" ||
+      _riskHazard == "URBAN_FLOOD";
+}
+
   Widget _buildAmberWaterloggingCard() {
-    final bool showForecastWarning = _forecastPrecipitation > 0 || _maxRainProbability >= 60;
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1B1407),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFD97706).withOpacity(0.35)),
+  final bool showForecastWarning = _hasVerifiedRainHazard();
+  final String advisoryTitle = showForecastWarning
+      ? "Rain advisory: elevated risk detected"
+      : "Rain monitoring: no verified rain hazard";
+
+  final Color advisoryColor = showForecastWarning
+      ? const Color(0xFFF59E0B)
+      : const Color(0xFF38BDF8);
+
+  return Container(
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: const Color(0xFF1B1407),
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(
+        color: const Color(0xFFD97706).withOpacity(0.35),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(
-                showForecastWarning ? Icons.warning_amber_rounded : Icons.info_outline,
-                color: showForecastWarning ? const Color(0xFFF59E0B) : const Color(0xFF38BDF8),
-                size: 16,
-              ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  showForecastWarning ? "Forecast monitoring: elevated rain probability" : "Forecast monitoring: no significant accumulation",
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    color: showForecastWarning ? const Color(0xFFF59E0B) : const Color(0xFF38BDF8),
-                  ),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(
+              showForecastWarning
+                  ? Icons.warning_amber_rounded
+                  : Icons.info_outline,
+              color: advisoryColor,
+              size: 16,
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                advisoryTitle,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  color: advisoryColor,
                 ),
               ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(4),
-            child: LinearProgressIndicator(
-              value: (_maxRainProbability / 100).clamp(0.0, 1.0),
-              minHeight: 4,
-              backgroundColor: const Color(0xFF2E220C),
-              valueColor: AlwaysStoppedAnimation<Color>(
-                showForecastWarning ? const Color(0xFFF59E0B) : const Color(0xFF38BDF8),
-              ),
+            ),
+          ],
+        ),
+
+        const SizedBox(height: 8),
+
+        ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: LinearProgressIndicator(
+            value: (_maxRainProbability / 100).clamp(0.0, 1.0),
+            minHeight: 4,
+            backgroundColor: const Color(0xFF2E220C),
+            valueColor: AlwaysStoppedAnimation<Color>(
+              advisoryColor,
             ),
           ),
-          const SizedBox(height: 6),
-          Text(
-            "Next 6 h: $_maxRainProbability% maximum rain probability. ${_forecastPrecipitation.toStringAsFixed(1)} mm precipitation.",
-            style: const TextStyle(fontSize: 10, color: Colors.white60),
+        ),
+
+        const SizedBox(height: 6),
+
+        Text(
+          "Next 6 h: $_maxRainProbability% maximum rain probability � "
+          "${_forecastPrecipitation.toStringAsFixed(1)} mm forecast precipitation.",
+          style: const TextStyle(
+            fontSize: 10,
+            color: Colors.white60,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+  Widget _buildTelemetryRow() {
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Row(
+        children: [
+          Expanded(
+            child: _buildTelemetryTile(
+              _temp,
+              _feelsLike,
+              Icons.thermostat,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _buildTelemetryTile(
+              _humidity,
+              "Humidity",
+              Icons.water_drop_outlined,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _buildTelemetryTile(
+              _rainProb,
+              "Rain probability",
+              Icons.grain,
+            ),
           ),
         ],
       ),
-    );
-  }
 
-  Widget _buildTelemetryRow() {
-    return Row(
-      children: [
-        Expanded(child: _buildTelemetryTile(_temp, _feelsLike, Icons.thermostat)),
-        const SizedBox(width: 8),
-        Expanded(child: _buildTelemetryTile(_humidity, "Humidity", Icons.water_drop_outlined)),
-        const SizedBox(width: 8),
-        Expanded(child: _buildTelemetryTile(_rainProb, "Rain probability", Icons.grain)),
+      if (_lastCachedUpdate != null) ...[
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            const Icon(
+              Icons.history,
+              size: 13,
+              color: Colors.orangeAccent,
+            ),
+            const SizedBox(width: 5),
+            Text(
+              "Last updated: ${_formatUpdateTime(_lastCachedUpdate!)}",
+              style: const TextStyle(
+                fontSize: 10,
+                color: Colors.white54,
+              ),
+            ),
+          ],
+        ),
       ],
-    );
-  }
+    ],
+  );
+}
 
   Widget _buildTelemetryTile(String value, String label, IconData icon) {
     return Container(
@@ -1020,11 +2152,10 @@ class _EmergencySOSDialogState extends State<EmergencySOSDialog> {
   }
 
   @override
-  void dispose() {
-    _phoneController.dispose();
-    MeshEngine().stopMesh();
-    super.dispose();
-  }
+void dispose() {
+  _phoneController.dispose();
+  super.dispose();
+}
 
   Future<void> _toggleEmergencyBroadcast() async {
     if (_isMeshActive) {
@@ -1095,21 +2226,63 @@ class _EmergencySOSDialogState extends State<EmergencySOSDialog> {
   }
 
   Future<void> _triggerOfflineSMS() async {
-    final String latStr = widget.lat.toStringAsFixed(4);
-    final String lonStr = widget.lon.toStringAsFixed(4);
-    final Uri uri = Uri.parse(
-        'sms:112?body=WXGPT|SOS|LAT:$latStr|LON:$lonStr|SEV:4|CODE:7MJUG1XT+5F');
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri);
+  final String latStr = widget.lat.toStringAsFixed(4);
+  final String lonStr = widget.lon.toStringAsFixed(4);
+
+  const String recipient = '+919073723106';
+
+  final String message =
+      'WXGPT|SOS|LAT:$latStr|LON:$lonStr|SEV:4|CODE:7MJUG1XT+5F';
+
+  try {
+    final Telephony telephony = Telephony.instance;
+
+    final bool? permissionsGranted =
+        await telephony.requestSmsPermissions;
+
+    if (permissionsGranted != true) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('SMS permission was not granted.'),
+          ),
+        );
+      }
+      return;
+    }
+
+    await telephony.sendSms(
+      to: recipient,
+      message: message,
+    );
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('SOS SMS sent successfully.'),
+        ),
+      );
+    }
+  } catch (e) {
+    debugPrint('Automatic SOS SMS failed: $e');
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to send SOS SMS: $e'),
+        ),
+      );
     }
   }
+}
 
   Future<void> _makeCall(String number) async {
-    final Uri uri = Uri.parse('tel:$number');
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri);
-    }
+  try {
+    await FlutterPhoneDirectCaller.callNumber(number);
+  } catch (e) {
+    debugPrint("Direct call failed: $e");
   }
+}
 
   @override
   Widget build(BuildContext context) {
@@ -1450,7 +2623,7 @@ class _HamburgerDrawerState extends State<HamburgerDrawer> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text("WeatherGPT", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                const Text("WeatherGPT", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
                 IconButton(
                   icon: const Icon(Icons.close, color: Colors.grey, size: 20),
                   onPressed: () => Navigator.pop(context),
@@ -1458,6 +2631,25 @@ class _HamburgerDrawerState extends State<HamburgerDrawer> {
               ],
             ),
             const SizedBox(height: 16),
+            ListTile(
+              dense: true,
+              leading: const Icon(Icons.admin_panel_settings, color: Color(0xFF38BDF8), size: 20),
+              title: const Text("Officer Login", style: TextStyle(fontSize: 13, color: Colors.white)),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              tileColor: const Color(0xFF1F293B).withOpacity(0.5),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => GovtCommandScreen(
+                      onToggleToCitizen: () => Navigator.pop(context),
+                    ),
+                  ),
+                );
+              },
+            ),// <-- Make sure this comma is present
+            const SizedBox(height: 8), // <-- Ensure this is correctly formatted
             ListTile(
               dense: true,
               leading: const Icon(Icons.favorite_border, color: Color(0xFF38BDF8), size: 20),
@@ -1486,15 +2678,18 @@ class _HamburgerDrawerState extends State<HamburgerDrawer> {
               ],
             ),
             const SizedBox(height: 10),
-            Row(
-              children: [
-                _langChip("English"),
-                const SizedBox(width: 6),
-                _langChip("हिंदी"),
-                const SizedBox(width: 6),
-                _langChip("বাংলা"),
-              ],
-            ),
+            SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+            children: [
+              _langChip("English"),
+              const SizedBox(width: 6),
+              _langChip("?????"),
+              const SizedBox(width: 6),
+              _langChip("?????"),
+            ],
+  ),
+),
             const SizedBox(height: 24),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1522,7 +2717,7 @@ class _HamburgerDrawerState extends State<HamburgerDrawer> {
           ],
         ),
       ),
-    );
+      );
   }
 
   Widget _langChip(String label) {
@@ -1544,260 +2739,3 @@ class _HamburgerDrawerState extends State<HamburgerDrawer> {
   }
 }
 
-
-
-
-
-
-
-class BleMeshVisualizer extends StatefulWidget {
-  final bool isBroadcasting;
-
-  const BleMeshVisualizer({super.key, required this.isBroadcasting});
-
-  @override
-  State<BleMeshVisualizer> createState() => _BleMeshVisualizerState();
-}
-
-class _BleMeshVisualizerState extends State<BleMeshVisualizer>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _pulseController;
-  Timer? _hopTimer;
-  int _activeHop = 0;
-
-  final List<Map<String, dynamic>> _nodes = [
-    {"title": "Citizen Node", "sub": "This Device", "icon": Icons.phone_android},
-    {"title": "Relay Peer 1", "sub": "Nearby Phone", "icon": Icons.phone_android},
-    {"title": "Relay Peer 2", "sub": "Moving Vehicle", "icon": Icons.directions_boat},
-    {"title": "Relay Peer 3", "sub": "Relief Post", "icon": Icons.router},
-    {"title": "Gateway HQ", "sub": "Control Tower", "icon": Icons.cell_tower},
-  ];
-
-  @override
-  void initState() {
-    super.initState();
-    _pulseController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1400),
-    );
-
-    if (widget.isBroadcasting) {
-      _startHopSimulation();
-    }
-  }
-
-  @override
-  void didUpdateWidget(covariant BleMeshVisualizer oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.isBroadcasting && !oldWidget.isBroadcasting) {
-      _startHopSimulation();
-    } else if (!widget.isBroadcasting && oldWidget.isBroadcasting) {
-      _stopHopSimulation();
-    }
-  }
-
-  void _startHopSimulation() {
-    _pulseController.repeat(reverse: true);
-    _activeHop = 0;
-    _hopTimer?.cancel();
-    _hopTimer = Timer.periodic(const Duration(milliseconds: 1600), (timer) {
-      if (!mounted) return;
-      setState(() {
-        if (_activeHop < _nodes.length - 1) {
-          _activeHop++;
-        } else {
-          _activeHop = 0;
-        }
-      });
-    });
-  }
-
-  void _stopHopSimulation() {
-    _pulseController.stop();
-    _hopTimer?.cancel();
-    setState(() {
-      _activeHop = 0;
-    });
-  }
-
-  @override
-  void dispose() {
-    _pulseController.dispose();
-    _hopTimer?.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final bool active = widget.isBroadcasting;
-    final bool reachedGateway = active && _activeHop == (_nodes.length - 1);
-
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: const Color(0xFF0B1220),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: active ? const Color(0xFF0284C7).withOpacity(0.6) : const Color(0xFF1E293B),
-          width: 1.2,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(
-                children: [
-                  Icon(
-                    active ? Icons.sensors : Icons.sensors_off,
-                    size: 15,
-                    color: active ? const Color(0xFF38BDF8) : const Color(0xFF64748B),
-                  ),
-                  const SizedBox(width: 8),
-                  const Text(
-                    "BLE Mesh Relay Visualizer",
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                  ),
-                ],
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: active
-                      ? (reachedGateway ? const Color(0xFF064E3B) : const Color(0xFF0C4A6E))
-                      : const Color(0xFF1E293B),
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(
-                    color: active
-                        ? (reachedGateway ? const Color(0xFF10B981) : const Color(0xFF38BDF8))
-                        : const Color(0xFF334155),
-                  ),
-                ),
-                child: Text(
-                  active
-                      ? (reachedGateway ? "✓ Gateway Reached" : "v Hop $_activeHop/${_nodes.length - 1}")
-                      : "Mesh Standby",
-                  style: TextStyle(
-                    fontSize: 9.5,
-                    fontFamily: 'monospace',
-                    fontWeight: FontWeight.bold,
-                    color: active
-                        ? (reachedGateway ? const Color(0xFF34D399) : const Color(0xFF38BDF8))
-                        : const Color(0xFF64748B),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            physics: const BouncingScrollPhysics(),
-            child: Row(
-              children: List.generate(_nodes.length * 2 - 1, (index) {
-                if (index.isOdd) {
-                  final int stepIndex = index ~/ 2;
-                  final bool isArrowActive = active && _activeHop > stepIndex;
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 5),
-                    child: Icon(
-                      Icons.chevron_right,
-                      size: 16,
-                      color: isArrowActive ? const Color(0xFF38BDF8) : const Color(0xFF334155),
-                    ),
-                  );
-                }
-
-                final int nodeIndex = index ~/ 2;
-                final node = _nodes[nodeIndex];
-                final bool isNodeActive = active && (_activeHop >= nodeIndex);
-                final bool isCurrentHop = active && (_activeHop == nodeIndex);
-                final bool isGateway = nodeIndex == _nodes.length - 1;
-
-                return AnimatedContainer(
-                  duration: const Duration(milliseconds: 300),
-                  width: 82,
-                  padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
-                  decoration: BoxDecoration(
-                    color: isNodeActive
-                        ? (isGateway
-                            ? const Color(0xFF064E3B).withOpacity(0.4)
-                            : const Color(0xFF0369A1).withOpacity(0.25))
-                        : const Color(0xFF0F172A),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: isNodeActive
-                          ? (isGateway ? const Color(0xFF10B981) : const Color(0xFF38BDF8))
-                          : const Color(0xFF1E293B),
-                      width: isCurrentHop ? 1.6 : 1.0,
-                    ),
-                    boxShadow: isCurrentHop
-                        ? [
-                            BoxShadow(
-                              color: (isGateway ? const Color(0xFF10B981) : const Color(0xFF38BDF8))
-                                  .withOpacity(0.35),
-                              blurRadius: 8,
-                              spreadRadius: 1,
-                            )
-                          ]
-                        : [],
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        node["icon"] as IconData,
-                        size: 18,
-                        color: isNodeActive
-                            ? (isGateway ? const Color(0xFF34D399) : const Color(0xFF38BDF8))
-                            : const Color(0xFF475569),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        node["title"] as String,
-                        style: TextStyle(
-                          fontSize: 9.5,
-                          fontWeight: FontWeight.bold,
-                          color: isNodeActive ? Colors.white : const Color(0xFF64748B),
-                        ),
-                        textAlign: TextAlign.center,
-                        maxLines: 1,
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        node["sub"] as String,
-                        style: TextStyle(
-                          fontSize: 7.8,
-                          color: isNodeActive ? const Color(0xFF94A3B8) : const Color(0xFF475569),
-                        ),
-                        textAlign: TextAlign.center,
-                        maxLines: 1,
-                      ),
-                    ],
-                  ),
-                );
-              }),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            active
-                ? "Propagating SOS beacon peer-to-peer. Packet hops across mobile devices until an active gateway is reached."
-                : "Relayed via nearby nodes. If infrastructure is lost, WeatherGPT receivers forward packets without internet.",
-            style: const TextStyle(
-              fontSize: 10,
-              color: Color(0xFF64748B),
-              height: 1.3,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}

@@ -30,3 +30,5 @@ class DisasterEventResponse(BaseModel):
 
     class Config:
         from_attributes = True
+class NearbyDisasterEventResponse(DisasterEventResponse):
+    distance_km: float

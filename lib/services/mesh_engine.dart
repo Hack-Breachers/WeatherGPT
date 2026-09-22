@@ -1,5 +1,8 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:typed_data';
+
 import 'package:flutter/foundation.dart';
 import 'package:nearby_connections/nearby_connections.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -9,199 +12,1016 @@ class MeshPacket {
   final String phone;
   final double latitude;
   final double longitude;
+  final String category;
+  final int severity;
   final int hops;
   final int timestamp;
 
   MeshPacket({
-    required this.packetId,
+    String? packetId,
+    String? id,
     required this.phone,
-    required this.latitude,
-    required this.longitude,
+    double? latitude,
+    double? lat,
+    double? longitude,
+    double? lon,
+    this.category = 'STRANDED',
+    this.severity = 4,
     this.hops = 0,
     int? timestamp,
-  }) : timestamp = timestamp ?? DateTime.now().millisecondsSinceEpoch;
+  })  : packetId = packetId ?? id ?? '',
+        latitude = latitude ?? lat ?? 0.0,
+        longitude = longitude ?? lon ?? 0.0,
+        timestamp =
+            timestamp ?? DateTime.now().millisecondsSinceEpoch;
 
-  Map<String, dynamic> toMap() => {
-        'id': packetId,
-        'phone': phone,
-        'lat': latitude,
-        'lon': longitude,
-        'hops': hops,
-        'time': timestamp,
-      };
+  String get id => packetId;
+  double get lat => latitude;
+  double get lon => longitude;
 
-  factory MeshPacket.fromJson(Map<String, dynamic> json) => MeshPacket(
-        packetId: json['id'] as String,
-        phone: json['phone'] as String,
-        latitude: (json['lat'] as num).toDouble(),
-        longitude: (json['lon'] as num).toDouble(),
-        hops: json['hops'] as int,
-        timestamp: json['time'] as int,
-      );
+  Uint8List toBytes() {
+    return Uint8List.fromList(
+      utf8.encode(jsonEncode(toMap())),
+    );
+  }
 
-  Uint8List toBytes() => Uint8List.fromList(utf8.encode(jsonEncode(toMap())));
+  static MeshPacket fromBytes(List<int> bytes) {
+    final map =
+        jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
 
-  factory MeshPacket.fromBytes(Uint8List bytes) =>
-      MeshPacket.fromJson(jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>);
+    return MeshPacket.fromMap(map);
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'id': packetId,
+      'packetId': packetId,
+      'phone': phone,
+      'lat': latitude,
+      'latitude': latitude,
+      'lon': longitude,
+      'longitude': longitude,
+      'category': category,
+      'severity': severity,
+      'hops': hops,
+      'timestamp': timestamp,
+    };
+  }
+
+  factory MeshPacket.fromMap(Map<String, dynamic> map) {
+    return MeshPacket(
+      packetId:
+          (map['packetId'] ?? map['id'])?.toString() ?? '',
+      phone: map['phone']?.toString() ?? '',
+      latitude:
+          ((map['latitude'] ?? map['lat']) as num?)
+                  ?.toDouble() ??
+              0.0,
+      longitude:
+          ((map['longitude'] ?? map['lon']) as num?)
+                  ?.toDouble() ??
+              0.0,
+      category:
+          map['category']?.toString() ?? 'STRANDED',
+      severity:
+          (map['severity'] as num?)?.toInt() ?? 4,
+      hops:
+          (map['hops'] as num?)?.toInt() ?? 0,
+      timestamp:
+          (map['timestamp'] as num?)?.toInt() ??
+              DateTime.now().millisecondsSinceEpoch,
+    );
+  }
 }
 
+typedef SosPacket = MeshPacket;
+
 class MeshEngine {
-  static final MeshEngine _instance = MeshEngine._internal();
+  static final MeshEngine _instance =
+      MeshEngine._internal();
+
   factory MeshEngine() => _instance;
+
   MeshEngine._internal();
 
-  final Strategy _strategy = Strategy.P2P_CLUSTER;
-  final String _serviceId = "com.weathergpt.sos.mesh";
+  static const String _serviceId =
+      "com.weathergpt.mesh";
 
+  // IMPORTANT:
+  // Cluster is better for a multi-device disaster mesh.
+  final Strategy _strategy =
+      Strategy.P2P_CLUSTER;
+
+  static final StreamController<MeshPacket>
+      packetStreamController =
+      StreamController<MeshPacket>.broadcast();
+
+  static Stream<MeshPacket> get onPacketStream =>
+      packetStreamController.stream;
+
+  final Set<String> _connectedEndpoints = {};
+  final Set<String> _pendingEndpoints = {};
   final Set<String> _seenPacketIds = {};
-  final List<String> _connectedEndpoints = [];
-  bool isBroadcasting = false;
+  final List<MeshPacket> _outboxQueue = [];
+
+  Function(MeshPacket)? _onPacketReceived;
+
+  bool _isMeshRunning = false;
+  bool _isStarting = false;
+
+  String _currentUserName = "";
+
+  late final String _nodeId =
+      (1000 + math.Random().nextInt(9000)).toString();
+
+  bool get isRunning => _isMeshRunning;
+
+  bool get isBroadcasting => _isMeshRunning;
+
+  int get activePeerCount =>
+      _connectedEndpoints.length;
+
+  // ============================================================
+  // PERMISSIONS
+  // ============================================================
 
   Future<bool> checkAndRequestPermissions() async {
-    Map<Permission, PermissionStatus> statuses = await [
+    final permissions = [
       Permission.location,
+      Permission.bluetoothScan,
       Permission.bluetoothAdvertise,
       Permission.bluetoothConnect,
-      Permission.bluetoothScan,
       Permission.nearbyWifiDevices,
-    ].request();
+    ];
 
-    return statuses.values.every((status) => status.isGranted || status.isLimited);
+    final statuses =
+        await permissions.request();
+
+    for (final entry in statuses.entries) {
+      debugPrint(
+        "MESH PERMISSION: ${entry.key} = ${entry.value}",
+      );
+    }
+
+    final granted = statuses.values.every(
+      (status) =>
+          status.isGranted ||
+          status.isLimited,
+    );
+
+    debugPrint(
+      "MESH PERMISSIONS RESULT: $granted",
+    );
+
+    return granted;
   }
+
+  // ============================================================
+  // START MESH
+  // ============================================================
 
   Future<void> startMesh({
     required String userName,
-    Function(MeshPacket packet)? onPacketReceived,
+    Function(MeshPacket)? onPacketReceived,
   }) async {
-    if (kIsWeb) {
-      debugPrint("Mesh Engine: Running on Web preview (Hardware BLE radios disabled).");
+    // If already running, just update callback.
+    if (_isMeshRunning) {
+      debugPrint(
+        "MESH: Already running. Updating packet callback.",
+      );
+
+      if (onPacketReceived != null) {
+        _onPacketReceived =
+            onPacketReceived;
+      }
+
       return;
     }
 
-    final granted = await checkAndRequestPermissions();
-    if (!granted) {
-      debugPrint("Mesh Engine: Permissions not granted.");
+    // Prevent simultaneous startup.
+    if (_isStarting) {
+      debugPrint(
+        "MESH: Startup already in progress.",
+      );
       return;
     }
 
-    isBroadcasting = true;
+    _isStarting = true;
 
     try {
-      await Nearby().startAdvertising(
-        userName,
-        _strategy,
-        onConnectionInitiated: (id, info) => _onConnectionInit(id, info, onPacketReceived),
-        onConnectionResult: (id, status) => _onConnectionResult(id, status),
-        onDisconnected: (id) => _connectedEndpoints.remove(id),
-        serviceId: _serviceId,
-      );
-    } catch (e) {
-      debugPrint("Advertising error: $e");
-    }
+      final hasPermissions =
+          await checkAndRequestPermissions();
 
-    try {
-      await Nearby().startDiscovery(
-        userName,
-        _strategy,
-        onEndpointFound: (id, name, serviceId) {
-          Nearby().requestConnection(
-            userName,
-            id,
-            onConnectionInitiated: (endpointId, info) =>
-                _onConnectionInit(endpointId, info, onPacketReceived),
-            onConnectionResult: (endpointId, status) =>
-                _onConnectionResult(endpointId, status),
-            onDisconnected: (endpointId) => _connectedEndpoints.remove(endpointId),
-          );
-        },
-        onEndpointLost: (id) => _connectedEndpoints.remove(id),
-        serviceId: _serviceId,
+      if (!hasPermissions) {
+        debugPrint(
+          "MESH ERROR: Required permissions denied.",
+        );
+        return;
+      }
+
+      // Clean old Nearby state.
+      try {
+        await Nearby().stopAllEndpoints();
+      } catch (_) {}
+
+      try {
+        await Nearby().stopDiscovery();
+      } catch (_) {}
+
+      try {
+        await Nearby().stopAdvertising();
+      } catch (_) {}
+
+      _currentUserName =
+          "${userName}_#$_nodeId";
+
+      _onPacketReceived =
+          onPacketReceived;
+
+      _connectedEndpoints.clear();
+      _pendingEndpoints.clear();
+
+      _isMeshRunning = true;
+
+      debugPrint(
+        "========================================",
       );
-    } catch (e) {
-      debugPrint("Discovery error: $e");
+
+      debugPrint(
+        "MESH STARTING",
+      );
+
+      debugPrint(
+        "MESH NODE: $_currentUserName",
+      );
+
+      debugPrint(
+        "MESH SERVICE: $_serviceId",
+      );
+
+      debugPrint(
+        "MESH STRATEGY: P2P_CLUSTER",
+      );
+
+      debugPrint(
+        "========================================",
+      );
+
+      await _startAdvertising();
+
+      await Future.delayed(
+        const Duration(milliseconds: 500),
+      );
+
+      await _startDiscovery();
+
+      debugPrint(
+        "MESH: Mesh startup complete.",
+      );
+    } catch (e, stack) {
+      debugPrint(
+        "MESH START ERROR: $e",
+      );
+
+      debugPrint(
+        "$stack",
+      );
+
+      _isMeshRunning = false;
+    } finally {
+      _isStarting = false;
     }
   }
 
-  void _onConnectionInit(
-    String endpointId,
-    ConnectionInfo info,
-    Function(MeshPacket packet)? onPacketReceived,
-  ) {
-    Nearby().acceptConnection(
-      endpointId,
-      onPayLoadRecieved: (endpointId, payload) {
-        if (payload.type == PayloadType.BYTES && payload.bytes != null) {
+  // ============================================================
+  // ADVERTISING
+  // ============================================================
+
+  Future<void> _startAdvertising() async {
+    try {
+      debugPrint(
+        "MESH: Starting advertising...",
+      );
+
+      await Nearby().startAdvertising(
+        _currentUserName,
+        _strategy,
+
+        onConnectionInitiated:
+            _handleConnectionInitiation,
+
+        onConnectionResult:
+            (endpointId, status) {
+          _handleConnectionResult(
+            endpointId,
+            status,
+          );
+        },
+
+        onDisconnected:
+            (endpointId) {
+          _handleDisconnection(
+            endpointId,
+          );
+        },
+
+        serviceId: _serviceId,
+      );
+
+      debugPrint(
+        "MESH: Advertising ACTIVE.",
+      );
+    } catch (e) {
+      debugPrint(
+        "MESH ADVERTISE ERROR: $e",
+      );
+    }
+  }
+
+  // ============================================================
+  // DISCOVERY
+  // ============================================================
+
+  Future<void> _startDiscovery() async {
+    try {
+      debugPrint(
+        "MESH: Starting discovery...",
+      );
+
+      await Nearby().startDiscovery(
+        _currentUserName,
+        _strategy,
+
+        onEndpointFound:
+            (id, name, serviceId) async {
+          debugPrint(
+            "MESH DISCOVERY: Found endpoint",
+          );
+
+          debugPrint(
+            "  ID: $id",
+          );
+
+          debugPrint(
+            "  NAME: $name",
+          );
+
+          debugPrint(
+            "  SERVICE: $serviceId",
+          );
+
+          // Ignore wrong service.
+          if (serviceId != _serviceId) {
+            debugPrint(
+              "MESH: Ignoring endpoint with wrong service ID.",
+            );
+            return;
+          }
+
+          // Ignore ourselves.
+          if (name == _currentUserName ||
+              name.contains(_nodeId)) {
+            debugPrint(
+              "MESH: Ignoring self endpoint.",
+            );
+            return;
+          }
+
+          // Already connected.
+          if (_connectedEndpoints
+              .contains(id)) {
+            debugPrint(
+              "MESH: Endpoint already connected.",
+            );
+            return;
+          }
+
+          // Connection already being attempted.
+          if (_pendingEndpoints
+              .contains(id)) {
+            debugPrint(
+              "MESH: Connection already pending.",
+            );
+            return;
+          }
+
+          _pendingEndpoints.add(id);
+
+          debugPrint(
+            "MESH: REQUESTING CONNECTION -> $name ($id)",
+          );
+
           try {
-            final packet = MeshPacket.fromBytes(payload.bytes!);
-            if (_seenPacketIds.contains(packet.packetId)) return;
-            _seenPacketIds.add(packet.packetId);
+            await Nearby().requestConnection(
+              _currentUserName,
+              id,
 
-            if (onPacketReceived != null) onPacketReceived(packet);
+              onConnectionInitiated:
+                  _handleConnectionInitiation,
 
-            forwardPacket(
-              MeshPacket(
-                packetId: packet.packetId,
-                phone: packet.phone,
-                latitude: packet.latitude,
-                longitude: packet.longitude,
-                hops: packet.hops + 1,
-                timestamp: packet.timestamp,
-              ),
-              excludeEndpoint: endpointId,
+              onConnectionResult:
+                  (endpointId, status) {
+                _handleConnectionResult(
+                  endpointId,
+                  status,
+                );
+              },
+
+              onDisconnected:
+                  (endpointId) {
+                _handleDisconnection(
+                  endpointId,
+                );
+              },
+            );
+
+            debugPrint(
+              "MESH: Connection request sent -> $id",
             );
           } catch (e) {
-            debugPrint("Error parsing payload: $e");
+            _pendingEndpoints.remove(id);
+
+            debugPrint(
+              "MESH REQUEST ERROR [$id]: $e",
+            );
           }
-        }
-      },
+        },
+
+        onEndpointLost: (id) {
+          if (id != null) {
+            debugPrint(
+              "MESH: Endpoint lost -> $id",
+            );
+
+            _pendingEndpoints.remove(id);
+          }
+        },
+
+        serviceId: _serviceId,
+      );
+
+      debugPrint(
+        "MESH: Discovery ACTIVE.",
+      );
+    } catch (e) {
+      debugPrint(
+        "MESH DISCOVERY ERROR: $e",
+      );
+    }
+  }
+
+  // ============================================================
+  // CONNECTION INITIATED
+  // ============================================================
+
+  Future<void> _handleConnectionInitiation(
+    String endpointId,
+    ConnectionInfo info,
+  ) async {
+    debugPrint(
+      "========================================",
+    );
+
+    debugPrint(
+      "MESH: CONNECTION INITIATED",
+    );
+
+    debugPrint(
+      "MESH: Endpoint ID: $endpointId",
+    );
+
+    debugPrint(
+      "MESH: Endpoint Name: ${info.endpointName}",
+    );
+
+    debugPrint(
+      "========================================",
+    );
+
+    // Never connect to ourselves.
+    if (info.endpointName ==
+            _currentUserName ||
+        info.endpointName.contains(
+          _nodeId,
+        )) {
+      debugPrint(
+        "MESH: Rejecting self connection.",
+      );
+
+      try {
+        await Nearby()
+            .rejectConnection(
+          endpointId,
+        );
+      } catch (_) {}
+
+      return;
+    }
+
+    try {
+      debugPrint(
+        "MESH: ACCEPTING connection from ${info.endpointName}",
+      );
+
+      await Nearby().acceptConnection(
+        endpointId,
+
+        onPayLoadRecieved:
+            (endId, payload) {
+          _handleIncomingPayload(
+            endId,
+            payload,
+          );
+        },
+
+        onPayloadTransferUpdate:
+            (endId, update) {
+          debugPrint(
+            "MESH PAYLOAD UPDATE: $endId -> $update",
+          );
+        },
+      );
+
+      debugPrint(
+        "MESH: Connection ACCEPTED -> $endpointId",
+      );
+    } catch (e) {
+      debugPrint(
+        "MESH ACCEPT ERROR [$endpointId]: $e",
+      );
+    }
+  }
+
+  // ============================================================
+  // CONNECTION RESULT
+  // ============================================================
+
+  void _handleConnectionResult(
+    String endpointId,
+    Status status,
+  ) {
+    debugPrint(
+      "========================================",
+    );
+
+    debugPrint(
+      "MESH: CONNECTION RESULT",
+    );
+
+    debugPrint(
+      "MESH: Endpoint: $endpointId",
+    );
+
+    debugPrint(
+      "MESH: Status: $status",
+    );
+
+    debugPrint(
+      "========================================",
+    );
+
+    _pendingEndpoints.remove(
+      endpointId,
+    );
+
+    if (status == Status.CONNECTED) {
+      _connectedEndpoints.add(
+        endpointId,
+      );
+
+      debugPrint(
+        "MESH: PEER CONNECTED!",
+      );
+
+      debugPrint(
+        "MESH: Active peers = ${_connectedEndpoints.length}",
+      );
+
+      // Deliver queued packets.
+      _flushOutboxToPeer(
+        endpointId,
+      );
+    } else {
+      _connectedEndpoints.remove(
+        endpointId,
+      );
+
+      debugPrint(
+        "MESH: Connection FAILED.",
+      );
+
+      debugPrint(
+        "MESH: Status = $status",
+      );
+    }
+  }
+
+  // ============================================================
+  // DISCONNECT
+  // ============================================================
+
+  void _handleDisconnection(
+    String endpointId,
+  ) {
+    _connectedEndpoints.remove(
+      endpointId,
+    );
+
+    _pendingEndpoints.remove(
+      endpointId,
+    );
+
+    debugPrint(
+      "MESH: PEER DISCONNECTED -> $endpointId",
+    );
+
+    debugPrint(
+      "MESH: Remaining peers = ${_connectedEndpoints.length}",
     );
   }
 
-  void _onConnectionResult(String endpointId, Status status) {
-    if (status == Status.CONNECTED) {
-      _connectedEndpoints.add(endpointId);
-    } else {
-      _connectedEndpoints.remove(endpointId);
+  // ============================================================
+  // INCOMING PAYLOAD
+  // ============================================================
+
+  void _handleIncomingPayload(
+    String fromEndpointId,
+    Payload payload,
+  ) {
+    debugPrint(
+      "MESH: PAYLOAD RECEIVED from $fromEndpointId",
+    );
+
+    debugPrint(
+      "MESH: Payload type = ${payload.type}",
+    );
+
+    if (payload.type !=
+            PayloadType.BYTES ||
+        payload.bytes == null) {
+      debugPrint(
+        "MESH: Ignoring non-byte payload.",
+      );
+      return;
+    }
+
+    try {
+      final jsonString =
+          utf8.decode(
+        payload.bytes!,
+      );
+
+      debugPrint(
+        "MESH: Raw payload = $jsonString",
+      );
+
+      final data =
+          jsonDecode(jsonString)
+              as Map<String, dynamic>;
+
+      final packet =
+          MeshPacket.fromMap(data);
+
+      debugPrint(
+        "========================================",
+      );
+
+      debugPrint(
+        "🚨 MESH PACKET RECEIVED",
+      );
+
+      debugPrint(
+        "ID: ${packet.id}",
+      );
+
+      debugPrint(
+        "PHONE: ${packet.phone}",
+      );
+
+      debugPrint(
+        "LOCATION: ${packet.lat}, ${packet.lon}",
+      );
+
+      debugPrint(
+        "HOPS: ${packet.hops}",
+      );
+
+      debugPrint(
+        "========================================",
+      );
+
+      // Duplicate protection.
+      if (_seenPacketIds
+          .contains(packet.id)) {
+        debugPrint(
+          "MESH: Duplicate packet ignored -> ${packet.id}",
+        );
+        return;
+      }
+
+      _seenPacketIds.add(
+        packet.id,
+      );
+
+      // Notify UI.
+      packetStreamController.add(
+        packet,
+      );
+
+      _onPacketReceived?.call(
+        packet,
+      );
+
+      // Relay.
+      if (packet.hops < 4) {
+        awaitRelay(
+          packet,
+          fromEndpointId,
+        );
+      }
+    } catch (e) {
+      debugPrint(
+        "MESH PAYLOAD ERROR: $e",
+      );
     }
   }
+
+  // ============================================================
+  // RELAY
+  // ============================================================
+
+  Future<void> awaitRelay(
+    MeshPacket packet,
+    String fromEndpointId,
+  ) async {
+    final relayedPacket =
+        MeshPacket(
+      packetId: packet.packetId,
+      phone: packet.phone,
+      latitude: packet.latitude,
+      longitude: packet.longitude,
+      category: packet.category,
+      severity: packet.severity,
+      hops: packet.hops + 1,
+      timestamp: packet.timestamp,
+    );
+
+    debugPrint(
+      "MESH: RELAYING packet ${packet.id}",
+    );
+
+    debugPrint(
+      "MESH: New hop = ${relayedPacket.hops}",
+    );
+
+    await _broadcastPacket(
+      relayedPacket,
+      excludeEndpoint:
+          fromEndpointId,
+    );
+  }
+
+  // ============================================================
+  // SEND SOS
+  // ============================================================
 
   Future<void> sendSosDistressBeacon({
     required String phone,
-    required double lat,
-    required double lon,
+    double? lat,
+    double? latitude,
+    double? lon,
+    double? longitude,
+    String category = "STRANDED",
+    int severity = 4,
   }) async {
-    final String id = "${DateTime.now().millisecondsSinceEpoch}_$phone";
-    _seenPacketIds.add(id);
+    final actualLat =
+        latitude ?? lat ?? 0.0;
 
-    final packet = MeshPacket(
-      packetId: id,
+    final actualLon =
+        longitude ?? lon ?? 0.0;
+
+    final packet =
+        MeshPacket(
+      packetId:
+          "${DateTime.now().millisecondsSinceEpoch}_$phone",
       phone: phone,
-      latitude: lat,
-      longitude: lon,
+      latitude: actualLat,
+      longitude: actualLon,
+      category: category,
+      severity: severity,
       hops: 0,
+      timestamp:
+          DateTime.now()
+              .millisecondsSinceEpoch,
     );
 
-    await forwardPacket(packet);
+    debugPrint(
+      "========================================",
+    );
+
+    debugPrint(
+      "MESH: CREATING SOS PACKET",
+    );
+
+    debugPrint(
+      "ID: ${packet.id}",
+    );
+
+    debugPrint(
+      "PHONE: ${packet.phone}",
+    );
+
+    debugPrint(
+      "LOCATION: ${packet.lat}, ${packet.lon}",
+    );
+
+    debugPrint(
+      "CONNECTED PEERS: ${_connectedEndpoints.length}",
+    );
+
+    debugPrint(
+      "========================================",
+    );
+
+    _seenPacketIds.add(
+      packet.id,
+    );
+
+    // Queue it first.
+    _outboxQueue.add(
+      packet,
+    );
+
+    if (_connectedEndpoints.isEmpty) {
+      debugPrint(
+        "MESH: NO PEERS CONNECTED.",
+      );
+
+      debugPrint(
+        "MESH: Packet stored in outbox.",
+      );
+
+      debugPrint(
+        "MESH: Waiting for peer connection...",
+      );
+
+      return;
+    }
+
+    await _broadcastPacket(
+      packet,
+    );
   }
 
-  Future<void> forwardPacket(MeshPacket packet, {String? excludeEndpoint}) async {
-    if (kIsWeb) return;
+  // ============================================================
+  // FLUSH QUEUED PACKETS
+  // ============================================================
 
-    final bytes = packet.toBytes();
-    for (String endpoint in _connectedEndpoints) {
-      if (endpoint != excludeEndpoint) {
-        await Nearby().sendBytesPayload(endpoint, bytes);
+  Future<void> _flushOutboxToPeer(
+    String endpointId,
+  ) async {
+    if (_outboxQueue.isEmpty) {
+      debugPrint(
+        "MESH: No queued packets.",
+      );
+      return;
+    }
+
+    debugPrint(
+      "MESH: FLUSHING ${_outboxQueue.length} queued packet(s)",
+    );
+
+    final packets =
+        List<MeshPacket>.from(
+      _outboxQueue,
+    );
+
+    for (final packet in packets) {
+      try {
+        debugPrint(
+          "MESH: Sending queued packet ${packet.id} -> $endpointId",
+        );
+
+        await Nearby().sendBytesPayload(
+          endpointId,
+          packet.toBytes(),
+        );
+
+        debugPrint(
+          "MESH: QUEUED PACKET SENT SUCCESSFULLY -> $endpointId",
+        );
+
+        // Remove only after successful send.
+        _outboxQueue.remove(
+          packet,
+        );
+      } catch (e) {
+        debugPrint(
+          "MESH OUTBOX SEND ERROR [$endpointId]: $e",
+        );
       }
     }
   }
 
+  // ============================================================
+  // BROADCAST
+  // ============================================================
+
+  Future<void> _broadcastPacket(
+    MeshPacket packet, {
+    String? excludeEndpoint,
+  }) async {
+    if (_connectedEndpoints.isEmpty) {
+      debugPrint(
+        "MESH: Broadcast skipped - no connected peers.",
+      );
+      return;
+    }
+
+    final bytes =
+        packet.toBytes();
+
+    debugPrint(
+      "MESH: BROADCASTING packet ${packet.id}",
+    );
+
+    debugPrint(
+      "MESH: Peers = ${_connectedEndpoints.length}",
+    );
+
+    for (final endpointId
+        in List<String>.from(
+      _connectedEndpoints,
+    )) {
+      if (endpointId ==
+          excludeEndpoint) {
+        continue;
+      }
+
+      try {
+        debugPrint(
+          "MESH: Sending ${bytes.length} bytes -> $endpointId",
+        );
+
+        await Nearby()
+            .sendBytesPayload(
+          endpointId,
+          bytes,
+        );
+
+        debugPrint(
+          "MESH: PAYLOAD SENT SUCCESSFULLY -> $endpointId",
+        );
+      } catch (e) {
+        debugPrint(
+          "MESH SEND ERROR [$endpointId]: $e",
+        );
+      }
+    }
+
+    // Remove from queue after successful broadcast attempt.
+    _outboxQueue.removeWhere(
+      (queuedPacket) =>
+          queuedPacket.id ==
+          packet.id,
+    );
+  }
+
+  // ============================================================
+  // STOP
+  // ============================================================
+
   Future<void> stopMesh() async {
-    if (kIsWeb) return;
-    
-    isBroadcasting = false;
+    debugPrint(
+      "MESH: STOP REQUESTED",
+    );
+
+    _isMeshRunning = false;
+
     _connectedEndpoints.clear();
-    await Nearby().stopAdvertising();
-    await Nearby().stopDiscovery();
-    await Nearby().stopAllEndpoints();
+    _pendingEndpoints.clear();
+
+    // Do NOT clear outbox here if you want
+    // packets to survive temporary disconnects.
+    // _outboxQueue.clear();
+
+    try {
+      await Nearby()
+          .stopAdvertising();
+    } catch (_) {}
+
+    try {
+      await Nearby()
+          .stopDiscovery();
+    } catch (_) {}
+
+    try {
+      await Nearby()
+          .stopAllEndpoints();
+    } catch (_) {}
+
+    debugPrint(
+      "MESH: Radios halted.",
+    );
   }
 }

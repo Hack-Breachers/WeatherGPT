@@ -1,11 +1,4 @@
-from sqlalchemy import Column, Integer, Float, String
-from app.database.database import Base
+from app.models.location import Location
+from app.models.disaster_event import DisasterEvent
 
-
-class Location(Base):
-    __tablename__ = "locations"
-
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, nullable=False)
-    latitude = Column(Float, nullable=False)
-    longitude = Column(Float, nullable=False)
+__all__ = ["Location", "DisasterEvent"]

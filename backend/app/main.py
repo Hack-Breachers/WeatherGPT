@@ -1,4 +1,3 @@
-import os
 from datetime import datetime
 from typing import Optional
 
@@ -7,7 +6,10 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-import google.generativeai as genai
+
+import urllib.parse
+import urllib.request
+import json
 
 from app.database.database import Base, engine
 from app.models.location import Location
@@ -39,9 +41,6 @@ app.include_router(weather_router)
 app.include_router(dashboard_router)
 app.include_router(locations_router)
 app.include_router(disaster_events_router)
-
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-
 
 # ==========================================
 # PYDANTIC SCHEMAS
@@ -116,6 +115,44 @@ async def geocode_city(city_name: str) -> tuple[float, float, str]:
             return float(loc["latitude"]), float(loc["longitude"]), loc.get("name", city_name)
     return None, None, city_name
 
+async def reverse_geocode(latitude: float, longitude: float) -> str:
+    """Resolve latitude/longitude into a human-readable place name."""
+    try:
+        url = (
+            "https://nominatim.openstreetmap.org/reverse"
+            f"?lat={latitude}"
+            f"&lon={longitude}"
+            "&format=json"
+            "&zoom=10"
+            "&addressdetails=1"
+        )
+
+        request = urllib.request.Request(
+            url,
+            headers={"User-Agent": "WeatherGPT/1.0"},
+        )
+
+        with urllib.request.urlopen(request, timeout=5) as response:
+            data = json.loads(response.read().decode("utf-8"))
+
+        address = data.get("address", {})
+
+        city = (
+            address.get("city")
+            or address.get("town")
+            or address.get("municipality")
+            or address.get("village")
+        )
+
+        state = address.get("state")
+
+        if city and state:
+            return f"{city}, {state}"
+
+        return city or state or "Your Location"
+
+    except Exception:
+        return "Your Location"
 
 # ==========================================
 # API ROUTES
@@ -127,10 +164,10 @@ def health_check():
 
 
 @app.get("/api/v1/weather")
-async def get_weather(lat: float = 22.5726, lon: float = 88.3639):
+async def get_weather(latitude: float = 22.5726, longitude: float = 88.3639):
     try:
         provider = OpenMeteoProvider()
-        weather = provider.get_weather(lat, lon)
+        weather = provider.get_weather(latitude, longitude)
         current = weather["current"]
 
         temperature = float(current["temperature_2m"])
@@ -180,7 +217,7 @@ async def chat_weather(req: ChatRequest):
     try:
         lat = req.latitude
         lon = req.longitude
-        resolved_place = req.city or "Your Location"
+        resolved_place = req.city or await reverse_geocode(lat, lon)
 
         # 1. Geocode if a city name was submitted from the mobile search bar
         if req.city:
@@ -208,9 +245,12 @@ async def chat_weather(req: ChatRequest):
             current_time=current.get("time"),
         )
 
-        # 4. Retrieve RAG safety guidelines
-        rag_context = retrieve_rag_context(req.query)
-
+       # 4. Retrieve RAG safety guidelines using ONLY Risk Engine verified hazards
+        rag_context = retrieve_rag_context(
+             req.query,
+            verified_hazards=risk.get("hazards", []),
+        )
+        
         # 5. Assemble prompt for Qwen
         verified_context = f"""
 LOCATION: {resolved_place} (Lat: {lat}, Lon: {lon})
@@ -268,8 +308,12 @@ VERIFIED CONTEXT:
         # 7. Extract reply with fallback if tokens were categorized under reasoning
         msg = result["choices"][0]["message"]
         reply = msg.get("content")
+
         if not reply and msg.get("reasoning_content"):
             reply = msg.get("reasoning_content")
+
+        if reply:
+            reply = reply.replace("</think>", "").replace("<think>", "").strip()
 
         return {
             "location": resolved_place,
