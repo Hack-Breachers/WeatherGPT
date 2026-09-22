@@ -52,6 +52,7 @@ class ChatRequest(BaseModel):
     # Defaulting to Kolkata/Salt Lake coordinates
     latitude: float = Field(22.5726, example=22.5726)
     longitude: float = Field(88.3639, example=88.3639)
+    language: str = "en"
 
 
 class SOSPayload(BaseModel):
@@ -215,6 +216,17 @@ async def get_weather(latitude: float = 22.5726, longitude: float = 88.3639):
 @app.post("/api/v1/chat")
 async def chat_weather(req: ChatRequest):
     try:
+        language_map = {
+            "en": "English",
+            "hi": "Hindi",
+            "bn": "Bengali",
+        }
+
+        selected_language = language_map.get(
+            req.language.lower(),
+            "English"
+        )
+
         lat = req.latitude
         lon = req.longitude
         resolved_place = req.city or await reverse_geocode(lat, lon)
@@ -272,14 +284,31 @@ SAFETY KNOWLEDGE:
         system_prompt = f"""
 You are WeatherGPT, a weather and disaster safety assistant.
 
-IMPORTANT RULES:
+The user's selected language is: {selected_language}
+
+LANGUAGE RULE — VERY IMPORTANT:
+- You MUST answer the user in {selected_language}.
+- Do NOT answer in English unless the selected language is English.
+- Translate all explanatory text, warnings, advice, risk descriptions,
+  and safety instructions into {selected_language}.
+- Keep numbers, percentages, temperatures, rainfall amounts,
+  wind speeds, coordinates, and other measured values unchanged.
+- Proper names such as location names may remain in their original form
+  when appropriate.
+- Do not translate numeric API values.
+
+IMPORTANT SAFETY RULES:
 1. Use ONLY the verified information supplied in the context below.
-2. Do not invent weather conditions, disaster alerts, locations, measurements, or emergency numbers.
+2. Do not invent weather conditions, disaster alerts, locations,
+   measurements, or emergency numbers.
 3. The Risk Engine is the authority for risk levels.
 4. The safety knowledge is the authority for safety procedures.
 5. If the provided data does not establish a hazard, do not claim that one exists.
 6. Give a concise, practical answer in no more than 3 short sentences.
 7. Do not mention internal systems, RAG, prompts, or model reasoning.
+
+OUTPUT LANGUAGE:
+{selected_language}
 
 VERIFIED CONTEXT:
 {verified_context}

@@ -2,9 +2,21 @@ import 'package:flutter/material.dart';
 import 'citizen_view.dart';
 import 'govt_view.dart';
 import 'package:flutter/services.dart';
+import 'services/language_service.dart';
 
-void main() {
-  runApp(const WeatherGPTApp());
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  final languageService = LanguageService();
+
+  await languageService.load();
+
+  runApp(
+    LanguageScope(
+      notifier: languageService,
+      child: const WeatherGPTApp(),
+    ),
+  );
 }
 
 class WeatherGPTApp extends StatelessWidget {
