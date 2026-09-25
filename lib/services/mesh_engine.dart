@@ -6,30 +6,43 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:nearby_connections/nearby_connections.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'mesh_queue_service.dart';
 
 class MeshPacket {
   final String packetId;
+  final String packetType;
+  final String originId;
+  final String? ackFor;
   final String phone;
   final double latitude;
   final double longitude;
   final String category;
   final int severity;
+  final String locationCode;
+  final String message;
   final int hops;
+  final int ttl;
   final int timestamp;
 
   MeshPacket({
-    String? packetId,
-    String? id,
-    required this.phone,
-    double? latitude,
-    double? lat,
-    double? longitude,
-    double? lon,
-    this.category = 'STRANDED',
-    this.severity = 4,
-    this.hops = 0,
-    int? timestamp,
-  })  : packetId = packetId ?? id ?? '',
+  String? packetId,
+  String? id,
+  this.packetType = 'DATA',
+  this.originId = '',
+  this.ackFor,
+  required this.phone,
+  double? latitude,
+  double? lat,
+  double? longitude,
+  double? lon,
+  this.category = 'STRANDED',
+  this.severity = 4,
+  this.locationCode = '',
+  this.message = '',
+  this.hops = 0,
+  this.ttl = 8,
+  int? timestamp,
+})  : packetId = packetId ?? id ?? '',
         latitude = latitude ?? lat ?? 0.0,
         longitude = longitude ?? lon ?? 0.0,
         timestamp =
@@ -56,6 +69,9 @@ class MeshPacket {
     return {
       'id': packetId,
       'packetId': packetId,
+      'packetType': packetType,
+      'originId': originId,
+      'ackFor': ackFor,
       'phone': phone,
       'lat': latitude,
       'latitude': latitude,
@@ -63,7 +79,10 @@ class MeshPacket {
       'longitude': longitude,
       'category': category,
       'severity': severity,
+      'locationCode': locationCode,
+      'message': message,
       'hops': hops,
+      'ttl': ttl,
       'timestamp': timestamp,
     };
   }
@@ -72,21 +91,46 @@ class MeshPacket {
     return MeshPacket(
       packetId:
           (map['packetId'] ?? map['id'])?.toString() ?? '',
+
+      packetType:
+        map['packetType']?.toString() ?? 'DATA',
+
+      originId:
+        map['originId']?.toString() ?? '',
+
+      ackFor:
+        map['ackFor']?.toString(),
+      
       phone: map['phone']?.toString() ?? '',
+
       latitude:
           ((map['latitude'] ?? map['lat']) as num?)
                   ?.toDouble() ??
               0.0,
+
       longitude:
           ((map['longitude'] ?? map['lon']) as num?)
                   ?.toDouble() ??
               0.0,
+
       category:
           map['category']?.toString() ?? 'STRANDED',
+
       severity:
           (map['severity'] as num?)?.toInt() ?? 4,
+
+      locationCode:
+          map['locationCode']?.toString() ?? '',
+
+      message:
+          map['message']?.toString() ?? '',
+
       hops:
           (map['hops'] as num?)?.toInt() ?? 0,
+
+      ttl:
+        (map['ttl'] as num?)?.toInt() ?? 8,
+
       timestamp:
           (map['timestamp'] as num?)?.toInt() ??
               DateTime.now().millisecondsSinceEpoch,
@@ -123,6 +167,7 @@ class MeshEngine {
   final Set<String> _pendingEndpoints = {};
   final Set<String> _seenPacketIds = {};
   final List<MeshPacket> _outboxQueue = [];
+  final MeshQueueService _queueService = MeshQueueService();
 
   Function(MeshPacket)? _onPacketReceived;
 
@@ -240,6 +285,16 @@ class MeshEngine {
 
       _connectedEndpoints.clear();
       _pendingEndpoints.clear();
+
+      final pendingPackets =
+        await _queueService.getPendingPackets();
+          _outboxQueue.clear();
+          _outboxQueue.addAll(
+            pendingPackets,
+          );
+          debugPrint(
+            "MESH: Restored ${pendingPackets.length} pending packet(s) from persistent queue.",
+          );
 
       _isMeshRunning = true;
 
@@ -644,10 +699,10 @@ class MeshEngine {
   // INCOMING PAYLOAD
   // ============================================================
 
-  void _handleIncomingPayload(
+  Future<void> _handleIncomingPayload(
     String fromEndpointId,
     Payload payload,
-  ) {
+  ) async{
     debugPrint(
       "MESH: PAYLOAD RECEIVED from $fromEndpointId",
     );
@@ -682,6 +737,29 @@ class MeshEngine {
       final packet =
           MeshPacket.fromMap(data);
 
+      // ACK packets confirm successful delivery.
+if (packet.packetType == 'ACK') {
+  final ackedPacketId = packet.ackFor;
+
+  if (ackedPacketId != null &&
+      ackedPacketId.isNotEmpty) {
+    debugPrint(
+      "MESH: ACK RECEIVED for packet $ackedPacketId",
+    );
+
+    await _queueService.markDelivered(
+      ackedPacketId,
+    );
+
+    _outboxQueue.removeWhere(
+      (queuedPacket) =>
+          queuedPacket.packetId == ackedPacketId,
+    );
+  }
+
+  return;
+}
+
       debugPrint(
         "========================================",
       );
@@ -711,11 +789,15 @@ class MeshEngine {
       );
 
       // Duplicate protection.
-      if (_seenPacketIds
-          .contains(packet.id)) {
+      if (_seenPacketIds.contains(packet.id)) {
         debugPrint(
-          "MESH: Duplicate packet ignored -> ${packet.id}",
+          "MESH: Duplicate packet received -> ${packet.id}",
         );
+        await _sendAck(
+          packet,
+          fromEndpointId,
+        );
+
         return;
       }
 
@@ -733,7 +815,7 @@ class MeshEngine {
       );
 
       // Relay.
-      if (packet.hops < 4) {
+      if (packet.ttl > 0) {
         awaitRelay(
           packet,
           fromEndpointId,
@@ -746,6 +828,43 @@ class MeshEngine {
     }
   }
 
+  Future<void> _sendAck(
+  MeshPacket packet,
+  String endpointId,
+) async {
+  final ackPacket = MeshPacket(
+    packetId:
+        'ACK-${packet.packetId}-$_nodeId',
+    packetType: 'ACK',
+    originId: _nodeId,
+    ackFor: packet.packetId,
+    phone: packet.phone,
+    latitude: packet.latitude,
+    longitude: packet.longitude,
+    category: packet.category,
+    severity: packet.severity,
+    hops: 0,
+    ttl: 8,
+    timestamp:
+        DateTime.now().millisecondsSinceEpoch,
+  );
+
+  try {
+    await Nearby().sendBytesPayload(
+      endpointId,
+      ackPacket.toBytes(),
+    );
+
+    debugPrint(
+      "MESH: ACK SENT for ${packet.packetId} -> $endpointId",
+    );
+  } catch (e) {
+    debugPrint(
+      "MESH: ACK SEND FAILED for ${packet.packetId}: $e",
+    );
+  }
+}
+
   // ============================================================
   // RELAY
   // ============================================================
@@ -755,14 +874,20 @@ class MeshEngine {
     String fromEndpointId,
   ) async {
     final relayedPacket =
-        MeshPacket(
+    MeshPacket(
       packetId: packet.packetId,
+      packetType: packet.packetType,
+      originId: packet.originId,
+      ackFor: packet.ackFor,
       phone: packet.phone,
       latitude: packet.latitude,
       longitude: packet.longitude,
       category: packet.category,
       severity: packet.severity,
+      locationCode: packet.locationCode,
+      message: packet.message,
       hops: packet.hops + 1,
+      ttl: packet.ttl - 1,
       timestamp: packet.timestamp,
     );
 
@@ -793,6 +918,9 @@ class MeshEngine {
     double? longitude,
     String category = "STRANDED",
     int severity = 4,
+    String locationCode = '',
+    String message = '',
+    String? packetId,
   }) async {
     final actualLat =
         latitude ?? lat ?? 0.0;
@@ -801,19 +929,25 @@ class MeshEngine {
         longitude ?? lon ?? 0.0;
 
     final packet =
-        MeshPacket(
-      packetId:
-          "${DateTime.now().millisecondsSinceEpoch}_$phone",
-      phone: phone,
-      latitude: actualLat,
-      longitude: actualLon,
-      category: category,
-      severity: severity,
-      hops: 0,
-      timestamp:
+      MeshPacket(
+        packetId:
+          packetId ?? "${DateTime.now().millisecondsSinceEpoch}_$phone",
+        packetType: 'DATA',
+        originId: _nodeId,
+        phone: phone,
+        latitude: actualLat,
+        longitude: actualLon,
+        category: category,
+        severity: severity,
+        locationCode: locationCode,
+        message: message,
+        hops: 0,
+        timestamp:
           DateTime.now()
               .millisecondsSinceEpoch,
-    );
+      );
+
+      await _queueService.savePacket(packet);
 
     debugPrint(
       "========================================",
@@ -911,10 +1045,6 @@ class MeshEngine {
           "MESH: QUEUED PACKET SENT SUCCESSFULLY -> $endpointId",
         );
 
-        // Remove only after successful send.
-        _outboxQueue.remove(
-          packet,
-        );
       } catch (e) {
         debugPrint(
           "MESH OUTBOX SEND ERROR [$endpointId]: $e",
@@ -978,13 +1108,6 @@ class MeshEngine {
         );
       }
     }
-
-    // Remove from queue after successful broadcast attempt.
-    _outboxQueue.removeWhere(
-      (queuedPacket) =>
-          queuedPacket.id ==
-          packet.id,
-    );
   }
 
   // ============================================================

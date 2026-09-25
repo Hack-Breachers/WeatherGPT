@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
@@ -12,8 +12,7 @@ import urllib.request
 import json
 
 from app.database.database import Base, engine
-from app.models.location import Location
-from app.models.disaster_event import DisasterEvent
+from app.database.models import Location, DisasterEvent
 
 from app.api.weather import router as weather_router
 from app.api.dashboard import router as dashboard_router
@@ -55,12 +54,16 @@ class ChatRequest(BaseModel):
 
 
 class SOSPayload(BaseModel):
+    packet_id: str | None = None
     phone: str
     latitude: float
     longitude: float
     category: str = "STRANDED"
     severity: int = 4
+    location_code: str = ""
+    message: str = ""
 
+_seen_sos_packet_ids: set[str] = set()
 
 sos_records = [
     {
@@ -332,8 +335,49 @@ VERIFIED CONTEXT:
 
 @app.post("/api/v1/sos")
 async def log_sos(payload: SOSPayload):
-    sos_records.append(payload.model_dump())
-    return {"status": "SUCCESS", "message": "Beacon registered at District Control Hub"}
+    packet_id = payload.packet_id
+
+    # If this packet was already received, do not register it again.
+    if packet_id and packet_id in _seen_sos_packet_ids:
+        return {
+            "status": "DUPLICATE",
+            "message": "SOS packet already registered",
+            "packet_id": packet_id,
+        }
+
+    # Remember this packet so retries/relays do not create duplicates.
+    if packet_id:
+        _seen_sos_packet_ids.add(packet_id)
+
+    record = payload.model_dump()
+    record["status"] = "DELIVERED"
+    record["timestamp"] = datetime.now(timezone.utc).isoformat()
+
+    sos_records.append(record)
+
+    return {
+        "status": "SUCCESS",
+        "message": "Beacon registered at District Control Hub",
+        "packet_id": packet_id,
+    }
+
+
+@app.get("/api/v1/sos/{packet_id}")
+async def get_sos_status(packet_id: str):
+    """Return delivery state for one SOS packet."""
+    for record in reversed(sos_records):
+        if record.get("packet_id") == packet_id or record.get("id") == packet_id:
+            return {
+                "status": "DELIVERED",
+                "packet_id": packet_id,
+                "record": record,
+            }
+
+    return {
+        "status": "PENDING",
+        "packet_id": packet_id,
+        "message": "SOS packet has not reached the gateway yet",
+    }
 
 
 @app.get("/api/v1/incidents")
