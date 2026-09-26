@@ -1542,7 +1542,7 @@ String _formatUpdateTime(DateTime time) {
                     ),
                     SizedBox(height: 3),
                     Text(
-                      'Live regional event feed � 250 km radius',
+                      'Live regional event feed | 250 km radius',
                       style: TextStyle(
                         fontSize: 10,
                         color: Color(0xFF64748B),
@@ -2094,7 +2094,7 @@ bool _hasVerifiedRainHazard() {
         const SizedBox(height: 6),
 
         Text(
-          "Next 6 h: $_maxRainProbability% maximum rain probability � "
+          "Next 6 h: $_maxRainProbability% maximum rain probability : "
           "${_forecastPrecipitation.toStringAsFixed(1)} mm forecast precipitation.",
           style: const TextStyle(
             fontSize: 10,
@@ -2354,49 +2354,6 @@ Widget build(BuildContext context) {
           const LanguageSelector(),
 
           const SizedBox(height: 24),
-
-          // Offline Mode Simulator
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(
-                children: const [
-                  Icon(
-                    Icons.wifi_off,
-                    size: 16,
-                    color: Colors.grey,
-                  ),
-                  SizedBox(width: 8),
-                  Text(
-                    "Offline Mode Simulator",
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      color: Colors.white,
-                    ),
-                  ),
-                ],
-              ),
-              Switch(
-                value: _offlineSim,
-                activeThumbColor: const Color(0xFF38BDF8),
-                onChanged: (val) {
-                  setState(() => _offlineSim = val);
-
-                  Navigator.pop(context);
-
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        val
-                            ? "Offline simulator active"
-                            : "Online mode restored",
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ],
-          ),
         ],
       ),
     ),

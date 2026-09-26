@@ -44,7 +44,7 @@ class _OfficerLoginDialogState extends State<OfficerLoginDialog> {
 
   try {
     final response = await http.post(
-      Uri.parse('http://127.0.0.1:8000/api/officer/login'),
+      Uri.parse('http://192.168.1.4:8000/api/officer/login'),
       headers: {
         'Content-Type': 'application/json',
       },
@@ -77,10 +77,11 @@ class _OfficerLoginDialogState extends State<OfficerLoginDialog> {
       _errorMessage = 'Login failed. Please try again.';
     });
   } catch (e) {
-    setState(() {
-      _errorMessage =
-          'Unable to connect to the server. Please try again.';
-    });
+      debugPrint('Officer login error: $e');
+
+      setState(() {
+        _errorMessage = 'Connection error: $e';
+      });
   } finally {
     if (mounted) {
       setState(() {

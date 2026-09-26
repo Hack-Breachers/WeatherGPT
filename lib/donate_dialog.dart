@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 class DonateReliefDialog extends StatefulWidget {
   const DonateReliefDialog({super.key});
@@ -399,23 +400,27 @@ class _DonateReliefDialogState extends State<DonateReliefDialog> {
           child: Column(
             children: [
               Container(
-                width: 130,
-                height: 130,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: CustomPaint(
-                  size: const Size(130, 130),
-                  painter: _MockQrPatternPainter(),
-                ),
+              width: 150,
+              height: 150,
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: QrImageView(
+                data: 'DEMO QR - NOT A REAL PAYMENT QR',
+                version: QrVersions.auto,
+                size: 138,
+                backgroundColor: Colors.white,
+                errorCorrectionLevel: QrErrorCorrectLevel.H,
+              ),
               ),
 
               const SizedBox(height: 8),
 
               // Prevent long UPI text from overflowing.
               Text(
-                "wxrelief@upi · scan with GPay / PhonePe",
+                "DEMO QR · Payment integration placeholder",
                 textAlign: TextAlign.center,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
@@ -800,49 +805,5 @@ class _DonateReliefDialogState extends State<DonateReliefDialog> {
         ],
       ),
     );
-  }
-}
-
-// ==========================================
-// MOCK QR PATTERN PAINTER
-// ==========================================
-class _MockQrPatternPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = const Color(0xFF070C18);
-
-    const int grid = 9;
-    final double step = size.width / grid;
-
-    for (int r = 0; r < grid; r++) {
-      for (int c = 0; c < grid; c++) {
-        // Draw corners and pseudo QR data blocks
-        if ((r < 3 && c < 3) ||
-            (r < 3 && c > 5) ||
-            (r > 5 && c < 3) ||
-            (r * c) % 3 == 0) {
-          canvas.drawRRect(
-            RRect.fromRectAndRadius(
-              Rect.fromLTWH(
-                c * step + 2,
-                r * step + 2,
-                step - 4,
-                step - 4,
-              ),
-              const Radius.circular(2),
-            ),
-            paint,
-          );
-        }
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(
-    covariant CustomPainter oldDelegate,
-  ) {
-    return false;
   }
 }
