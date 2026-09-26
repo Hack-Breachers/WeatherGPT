@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 
 class JoinRescueCommunityDialog extends StatefulWidget {
   final bool startAtTasks;
@@ -10,6 +12,85 @@ class JoinRescueCommunityDialog extends StatefulWidget {
 
 class _JoinRescueCommunityDialogState extends State<JoinRescueCommunityDialog> {
   late bool _isSignUpTab;
+    bool _isRegistering = false;
+
+  // Temporary coordinates for registration.
+  // We will replace this with actual user-provided/current coordinates later.
+  static const double _registrationLatitude = 22.5726;
+  static const double _registrationLongitude = 88.3639;
+
+  Future<void> _registerMember() async {
+    final fullName = _nameController.text.trim();
+    final mobileNumber = _mobileController.text.trim();
+
+    if (fullName.isEmpty || mobileNumber.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Please enter your name and mobile number."),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _isRegistering = true;
+    });
+
+    try {
+      final uri = Uri.parse(
+        "http://127.0.0.1:8000/api/rescue-community/register",
+      ).replace(
+        queryParameters: {
+          "full_name": fullName,
+          "mobile_number": mobileNumber,
+          "blood_group": _selectedBloodGroup,
+          "latitude": _registrationLatitude.toString(),
+          "longitude": _registrationLongitude.toString(),
+          "skills": _selectedBadges.join(", "),
+        },
+      );
+
+      final response = await http.post(uri);
+
+      final data = jsonDecode(response.body);
+
+      if (!mounted) return;
+
+      if (response.statusCode == 200 && data["success"] == true) {
+        setState(() {
+          _isSignUpTab = false;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Registration successful."),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              data["message"] ?? "Registration failed.",
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Could not connect to the server: $e"),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isRegistering = false;
+        });
+      }
+    }
+  }
 
   final TextEditingController _nameController = TextEditingController(text: "Arindam Ghosh");
   final TextEditingController _mobileController = TextEditingController(text: "+91 98300 00000");
@@ -303,11 +384,24 @@ class _JoinRescueCommunityDialogState extends State<JoinRescueCommunityDialog> {
             minimumSize: const Size(double.infinity, 44),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
           ),
-          onPressed: () {
-            // Transitions directly to the Ground Tasks tab
-            setState(() => _isSignUpTab = false);
-          },
-          child: const Text("Register & see tasks", style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.white)),
+          onPressed: _isRegistering ? null : _registerMember,
+child: _isRegistering
+    ? const SizedBox(
+        height: 20,
+        width: 20,
+        child: CircularProgressIndicator(
+          strokeWidth: 2,
+          color: Colors.white,
+        ),
+      )
+    : const Text(
+        "Register & see tasks",
+        style: TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.bold,
+          color: Colors.white,
+        ),
+      ),
         ),
       ],
     );

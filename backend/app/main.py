@@ -21,6 +21,8 @@ from app.api.disaster_events import router as disaster_events_router
 from app.providers.weather_provider import OpenMeteoProvider
 from app.risk.risk_engine import calculate_risk
 from app.rag.retriever import retrieve_rag_context
+from app.api.rescue_community import router as rescue_community_router
+from app.api.officer_auth import router as officer_auth_router
 
 load_dotenv()
 
@@ -40,6 +42,8 @@ app.include_router(weather_router)
 app.include_router(dashboard_router)
 app.include_router(locations_router)
 app.include_router(disaster_events_router)
+app.include_router(rescue_community_router)
+app.include_router(officer_auth_router)
 
 # ==========================================
 # PYDANTIC SCHEMAS
