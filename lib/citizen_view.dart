@@ -7,6 +7,14 @@ import 'package:flutter/foundation.dart';
 import 'dart:async';
 import 'govt_view.dart';
 import 'emergency_sos_dialog.dart';
+import 'package:flutter_phone_direct_caller/flutter_phone_direct_caller.dart';
+import 'package:telephony/telephony.dart';
+import 'join_community_dialog.dart';
+import 'donate_dialog.dart';
+import 'services/language_service.dart';
+import 'services/app_strings.dart';
+import 'widgets/language_selector.dart';
+import 'officer_login_dialogue.dart';
 
 
 class MainCitizenScreen extends StatefulWidget {
@@ -763,54 +771,116 @@ DateTime? _lastNearbyUpdate;
 
   String _riskTitle() {
     switch (_riskHazard) {
-      case "HEAVY_RAIN":
-        return "Heavy Rain Advisory";
-      case "FORECAST_HEAVY_RAIN":
-        return "Heavy Rain Forecast";
-      case "URBAN_FLOOD":
-        return "Urban Flood Risk";
-      case "THUNDERSTORM":
-        return "Thunderstorm Risk";
+      case 'HEAVY_RAIN':
+        return AppStrings.t(
+          context,
+          'heavy_rain_advisory',
+        );
+
+      case 'FORECAST_HEAVY_RAIN':
+        return AppStrings.t(
+          context,
+          'heavy_rain_forecast',
+        );
+
+      case 'URBAN_FLOOD':
+        return AppStrings.t(
+          context,
+          'urban_flood_risk',
+        );
+
+      case 'THUNDERSTORM':
+        return AppStrings.t(
+          context,
+          'thunderstorm_risk',
+        );
+
       default:
-        return "Weather Risk Advisory";
+        return AppStrings.t(
+          context,
+          'weather_risk_advisory',
+        );
     }
   }
 
   String _riskReason() {
-    if (_riskHazard == "No active hazard") {
-      return "No significant weather hazard has been detected by the current risk engine.";
+    if (_riskHazard == 'No active hazard') {
+      return AppStrings.t(
+        context,
+        'no_significant_weather_hazard',
+      );
     }
-    if (_riskHazard == "Weather unavailable") {
-      return "Live weather data is currently unavailable.";
+
+    if (_riskHazard == 'Weather unavailable') {
+      return AppStrings.t(
+        context,
+        'live_weather_unavailable',
+      );
     }
-    final rainText = "Next 6 h: $_maxRainProbability% maximum rain probability, ${_forecastPrecipitation.toStringAsFixed(1)} mm forecast precipitation.";
+
+    final rainText = AppStrings.format(
+      context,
+      'rain_data_summary',
+      values: {
+        'rain': _maxRainProbability.toString(),
+        'precipitation':
+            _forecastPrecipitation.toStringAsFixed(1),
+      },
+    );
+
     switch (_riskHazard) {
-      case "HEAVY_RAIN":
-        return "Rain probability is elevated. $rainText";
-      case "FORECAST_HEAVY_RAIN":
-        return "Multiple upcoming hours show elevated rainfall probability. $rainText";
-      case "URBAN_FLOOD":
-        return "Forecast rainfall accumulation indicates elevated urban flood risk. $rainText";
-      case "THUNDERSTORM":
-        return "Thunderstorm conditions are indicated in the forecast.";
+      case 'HEAVY_RAIN':
+        return '${AppStrings.t(context, 'rain_probability_elevated')} $rainText';
+
+      case 'FORECAST_HEAVY_RAIN':
+        return '${AppStrings.t(context, 'upcoming_rain_probability')} $rainText';
+
+      case 'URBAN_FLOOD':
+        return '${AppStrings.t(context, 'urban_flood_risk_detected')} $rainText';
+
+      case 'THUNDERSTORM':
+        return AppStrings.t(
+          context,
+          'thunderstorm_conditions',
+        );
+
       default:
-        return "The weather risk engine has detected an elevated condition. $rainText";
+        return '${AppStrings.t(context, 'elevated_weather_condition')} $rainText';
     }
   }
 
   String _riskProtocol() {
     switch (_riskHazard) {
-      case "HEAVY_RAIN":
-      case "FORECAST_HEAVY_RAIN":
-        return "Protocol: carry rain protection, avoid waterlogged roads and monitor official alerts.";
-      case "URBAN_FLOOD":
-        return "Protocol: avoid underpasses and flooded roads; move to safer elevated areas if water rises.";
-      case "THUNDERSTORM":
-        return "Protocol: stay indoors, avoid open areas and do not shelter under isolated trees.";
-      case "Weather unavailable":
-        return "Protocol: check your connection and rely on official emergency information if conditions are unsafe.";
+      case 'HEAVY_RAIN':
+      case 'FORECAST_HEAVY_RAIN':
+        return AppStrings.t(
+          context,
+          'protocol_heavy_rain',
+        );
+
+      case 'URBAN_FLOOD':
+        return AppStrings.t(
+          context,
+          'protocol_flood',
+        );
+
+      case 'THUNDERSTORM':
+        return AppStrings.t(
+          context,
+          'protocol_thunderstorm',
+        );
+
+      case 'Weather unavailable':
+        return AppStrings.t(
+          context,
+          'protocol_unavailable',
+        );
+
       default:
-        return "Protocol: continue monitoring weather conditions and official alerts.";
+        return AppStrings.t(
+          context,
+          'protocol_default',
+        );
     }
   }
 
@@ -856,6 +926,9 @@ DateTime? _lastNearbyUpdate;
           'query': query,
           'latitude': _currentLat,
           'longitude': _currentLon,
+
+          // Current selected language
+          'language': LanguageScope.of(context).language.code,
         }),
       );
       if (res.statusCode == 200) {
@@ -904,13 +977,48 @@ DateTime? _lastNearbyUpdate;
 }
   
 
-  
+  void _showOfficerLogin() {
+  showGeneralDialog(
+    context: context,
+    barrierDismissible: false,
+    barrierLabel: "Officer Login",
+    barrierColor: Colors.transparent,
+    transitionDuration: const Duration(milliseconds: 250),
+    pageBuilder: (context, animation, secondaryAnimation) {
+      return OfficerLoginDialog(
+        onLoginSuccess: () {
+          widget.onToggleToGovt?.call();
+        },
+      );
+    },
+    transitionBuilder:
+        (context, animation, secondaryAnimation, child) {
+      final curvedAnimation = CurvedAnimation(
+        parent: animation,
+        curve: Curves.easeOutCubic,
+      );
+
+      return FadeTransition(
+        opacity: curvedAnimation,
+        child: ScaleTransition(
+          scale: Tween<double>(
+            begin: 0.92,
+            end: 1.0,
+          ).animate(curvedAnimation),
+          child: child,
+        ),
+      );
+    },
+  );
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       key: _scaffoldKey,
-      endDrawer: const HamburgerDrawer(),
+      endDrawer: HamburgerDrawer(
+       onOfficerLogin: _showOfficerLogin,
+      ),
       body: SafeArea(
         child: Stack(
           children: [
@@ -923,9 +1031,13 @@ DateTime? _lastNearbyUpdate;
                   const SizedBox(height: 18),
                   _buildLocationSelector(),
                   const SizedBox(height: 24),
-                  const Text(
-                    "Hi there! How can I help you today?",
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: Colors.white),
+                  Text(
+                    AppStrings.t(context, 'greeting'),
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                    ),
                   ),
                   const SizedBox(height: 12),
                   _buildSearchInput(),
@@ -969,12 +1081,21 @@ DateTime? _lastNearbyUpdate;
                   ),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
-                    children: const [
-                      Icon(Icons.shield_outlined, color: Colors.white, size: 20),
-                      SizedBox(width: 8),
+                    children: [
+                      const Icon(
+                        Icons.shield_outlined,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 8),
                       Text(
-                        "SOS / HELP",
-                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 0.8),
+                        AppStrings.t(context, 'sos_help'),
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                          letterSpacing: 0.8,
+                        ),
                       ),
                     ],
                   ),
@@ -1339,7 +1460,7 @@ DateTime? _lastNearbyUpdate;
 }
 
   Widget _buildSuggestions() {
-    final suggestions = ["Rain forecast","Thunderstorm warnings","Emergency shelters","Flood alerts"];
+    final suggestions = [AppStrings.t(context, 'rain_forecast'),AppStrings.t(context, 'thunderstorm_warnings'),AppStrings.t(context, 'emergency_shelters'),AppStrings.t(context, 'flood_alerts')];
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: Row(
@@ -1406,13 +1527,13 @@ String _formatUpdateTime(DateTime time) {
               ),
               const SizedBox(width: 10),
 
-              const Expanded(
+               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'REGIONAL HAZARD MONITOR',
-                      style: TextStyle(
+                  AppStrings.t(context, 'regional_hazard_monitor')    ,
+                      style: const TextStyle(
                         fontSize: 12.5,
                         fontWeight: FontWeight.w700,
                         color: Colors.white,
@@ -1907,9 +2028,15 @@ bool _hasVerifiedRainHazard() {
 
   Widget _buildAmberWaterloggingCard() {
   final bool showForecastWarning = _hasVerifiedRainHazard();
-  final String advisoryTitle = showForecastWarning
-      ? "Rain advisory: elevated risk detected"
-      : "Rain monitoring: no verified rain hazard";
+ final String advisoryTitle = showForecastWarning
+    ? AppStrings.t(
+        context,
+        'rain_advisory_elevated',
+      )
+    : AppStrings.t(
+        context,
+        'rain_monitoring_no_hazard',
+      );
 
   final Color advisoryColor = showForecastWarning
       ? const Color(0xFFF59E0B)
@@ -2076,7 +2203,12 @@ class MetricStat extends StatelessWidget {
 
 
 class HamburgerDrawer extends StatefulWidget {
-  const HamburgerDrawer({super.key});
+  final VoidCallback onOfficerLogin;
+
+  const HamburgerDrawer({
+    super.key,
+    required this.onOfficerLogin,
+  });
 
   @override
   State<HamburgerDrawer> createState() => _HamburgerDrawerState();
@@ -2084,132 +2216,193 @@ class HamburgerDrawer extends StatefulWidget {
 
 class _HamburgerDrawerState extends State<HamburgerDrawer> {
   bool _offlineSim = false;
-  String _selectedLang = "English";
 
   @override
-  Widget build(BuildContext context) {
-    return Drawer(
-      backgroundColor: const Color(0xFF0F172A),
-      child: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text("WeatherGPT", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
-                IconButton(
-                  icon: const Icon(Icons.close, color: Colors.grey, size: 20),
-                  onPressed: () => Navigator.pop(context),
+Widget build(BuildContext context) {
+  return Drawer(
+    backgroundColor: const Color(0xFF0F172A),
+    child: SafeArea(
+      child: ListView(
+        padding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 20,
+        ),
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                "WeatherGPT",
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
                 ),
-              ],
+              ),
+              IconButton(
+                icon: const Icon(
+                  Icons.close,
+                  color: Colors.grey,
+                  size: 20,
+                ),
+                onPressed: () => Navigator.pop(context),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 16),
+
+          // Officer Login
+          ListTile(
+            dense: true,
+            leading: const Icon(
+              Icons.admin_panel_settings,
+              color: Color(0xFF38BDF8),
+              size: 20,
             ),
-            const SizedBox(height: 16),
-            ListTile(
-              dense: true,
-              leading: const Icon(Icons.admin_panel_settings, color: Color(0xFF38BDF8), size: 20),
-              title: const Text("Officer Login", style: TextStyle(fontSize: 13, color: Colors.white)),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              tileColor: const Color(0xFF1F293B).withOpacity(0.5),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => GovtCommandScreen(
-                      onToggleToCitizen: () => Navigator.pop(context),
+            title: const Text(
+              "Officer Login",
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.white,
+              ),
+            ),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+            tileColor: const Color(0xFF1F293B).withOpacity(0.5),
+            onTap: () {
+              Navigator.pop(context);
+              widget.onOfficerLogin();
+            },
+          ),
+
+          const SizedBox(height: 8),
+
+          // Donate Now
+          ListTile(
+            dense: true,
+            leading: const Icon(
+              Icons.favorite_border,
+              color: Color(0xFF38BDF8),
+              size: 20,
+            ),
+            title: const Text(
+              "Donate Now",
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.white,
+              ),
+            ),
+            tileColor: const Color(0xFF1E293B).withOpacity(0.5),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+            onTap: () {
+              Navigator.pop(context);
+
+              showDialog(
+                context: context,
+                barrierColor: Colors.black87,
+                builder: (context) => const DonateReliefDialog(),
+              );
+            },
+          ),
+
+          const SizedBox(height: 8),
+
+          // Join Rescue Community
+          ListTile(
+            dense: true,
+            leading: const Icon(
+              Icons.people_outline,
+              color: Color(0xFF38BDF8),
+              size: 20,
+            ),
+            title: const Text(
+              "Join Rescue Community",
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.white,
+              ),
+            ),
+            tileColor: const Color(0xFF1E293B).withOpacity(0.5),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+            onTap: () {
+              Navigator.pop(context);
+
+              showDialog(
+                context: context,
+                barrierColor: Colors.black87,
+                builder: (context) =>
+                    const JoinRescueCommunityDialog(),
+              );
+            },
+          ),
+
+          const SizedBox(height: 20),
+
+          const Divider(
+            color: Color(0xFF334155),
+          ),
+
+          const SizedBox(height: 10),
+
+          // Real multilingual selector
+          const LanguageSelector(),
+
+          const SizedBox(height: 24),
+
+          // Offline Mode Simulator
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: const [
+                  Icon(
+                    Icons.wifi_off,
+                    size: 16,
+                    color: Colors.grey,
+                  ),
+                  SizedBox(width: 8),
+                  Text(
+                    "Offline Mode Simulator",
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      color: Colors.white,
                     ),
                   ),
-                );
-              },
-            ),// <-- Make sure this comma is present
-            const SizedBox(height: 8), // <-- Ensure this is correctly formatted
-            ListTile(
-              dense: true,
-              leading: const Icon(Icons.favorite_border, color: Color(0xFF38BDF8), size: 20),
-              title: const Text("Donate Now", style: TextStyle(fontSize: 13, color: Colors.white)),
-              tileColor: const Color(0xFF1E293B).withOpacity(0.5),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              onTap: () => Navigator.pop(context),
-            ),
-            const SizedBox(height: 8),
-            ListTile(
-              dense: true,
-              leading: const Icon(Icons.people_outline, color: Color(0xFF38BDF8), size: 20),
-              title: const Text("Join Rescue Community", style: TextStyle(fontSize: 13, color: Colors.white)),
-              tileColor: const Color(0xFF1E293B).withOpacity(0.5),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              onTap: () => Navigator.pop(context),
-            ),
-            const SizedBox(height: 20),
-            const Divider(color: Color(0xFF334155)),
-            const SizedBox(height: 10),
-            Row(
-              children: const [
-                Icon(Icons.language, size: 14, color: Colors.grey),
-                SizedBox(width: 6),
-                Text("Language", style: TextStyle(fontSize: 11, color: Colors.grey)),
-              ],
-            ),
-            const SizedBox(height: 10),
-            SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-            children: [
-              _langChip("English"),
-              const SizedBox(width: 6),
-              _langChip("?????"),
-              const SizedBox(width: 6),
-              _langChip("?????"),
-            ],
-  ),
-),
-            const SizedBox(height: 24),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Row(
-                  children: const [
-                    Icon(Icons.wifi_off, size: 16, color: Colors.grey),
-                    SizedBox(width: 8),
-                    Text("Offline Mode Simulator", style: TextStyle(fontSize: 12.5, color: Colors.white)),
-                  ],
-                ),
-                Switch(
-                  value: _offlineSim,
-                  activeThumbColor: const Color(0xFF38BDF8),
-                  onChanged: (val) {
-                    setState(() => _offlineSim = val);
-                    Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text(val ? "Offline simulator active" : "Online mode restored")),
-                    );
-                  },
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-      );
-  }
+                ],
+              ),
+              Switch(
+                value: _offlineSim,
+                activeThumbColor: const Color(0xFF38BDF8),
+                onChanged: (val) {
+                  setState(() => _offlineSim = val);
 
-  Widget _langChip(String label) {
-    final bool isSelected = _selectedLang == label;
-    return GestureDetector(
-      onTap: () => setState(() => _selectedLang = label),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          color: isSelected ? const Color(0xFF0284C7) : const Color(0xFF1E293B),
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(fontSize: 11, color: isSelected ? Colors.white : Colors.grey),
-        ),
+                  Navigator.pop(context);
+
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        val
+                            ? "Offline simulator active"
+                            : "Online mode restored",
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
+        ],
       ),
-    );
-  }
+    ),
+  );
+}
+
+  
 }
 
