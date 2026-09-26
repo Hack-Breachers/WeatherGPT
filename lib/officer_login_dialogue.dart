@@ -1,4 +1,6 @@
 import 'dart:ui';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
 import 'forgot_password_dialog.dart';
 
@@ -22,42 +24,71 @@ class _OfficerLoginDialogState extends State<OfficerLoginDialog> {
   String? _errorMessage;
 
   Future<void> _login() async {
-    final username = _usernameController.text.trim();
-    final password = _passwordController.text;
+  final username = _usernameController.text.trim();
+  final password = _passwordController.text;
 
-    if (username.isEmpty || password.isEmpty) {
+  setState(() {
+    _errorMessage = null;
+  });
+
+  if (username.isEmpty || password.isEmpty) {
+    setState(() {
+      _errorMessage = 'Please enter username and password.';
+    });
+    return;
+  }
+
+  setState(() {
+    _isLoading = true;
+  });
+
+  try {
+    final response = await http.post(
+      Uri.parse('http://127.0.0.1:8000/api/officer/login'),
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        'username': username,
+        'password': password,
+      }),
+    );
+
+    if (response.statusCode == 200) {
+  final data = jsonDecode(response.body);
+
+  if (data['success'] == true) {
+    if (mounted) {
+      Navigator.of(context).pop();
+      widget.onLoginSuccess();
+    }
+    return;
+  }
+ }
+
+    if (response.statusCode == 401) {
       setState(() {
-        _errorMessage = "Please enter username and password.";
+        _errorMessage = 'Invalid username or password.';
       });
       return;
     }
 
     setState(() {
-      _isLoading = true;
-      _errorMessage = null;
+      _errorMessage = 'Login failed. Please try again.';
     });
-
-    // TEMPORARY FRONTEND LOGIN
-    //
-    // We will replace this with your FastAPI/database
-    // authentication later.
-    await Future.delayed(const Duration(milliseconds: 700));
-
-    if (username == "officer" && password == "123456") {
-      if (!mounted) return;
-
-      Navigator.pop(context);
-
-      widget.onLoginSuccess();
-    } else {
-      if (!mounted) return;
-
+  } catch (e) {
+    setState(() {
+      _errorMessage =
+          'Unable to connect to the server. Please try again.';
+    });
+  } finally {
+    if (mounted) {
       setState(() {
         _isLoading = false;
-        _errorMessage = "Invalid username or password.";
       });
     }
   }
+}
 
   void _forgotPassword() {
     showGeneralDialog(

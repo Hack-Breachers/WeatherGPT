@@ -20,19 +20,8 @@ class LocationService {
     }
 
     // Returns exact device latitude & longitude
-    final position = await Geolocator.getCurrentPosition(
-  locationSettings: const LocationSettings(
-    accuracy: LocationAccuracy.high,
-  ),
-);
-
-print('=== LOCATION DEBUG ===');
-print('Latitude: ${position.latitude}');
-print('Longitude: ${position.longitude}');
-print('Accuracy: ${position.accuracy} meters');
-print('Timestamp: ${position.timestamp}');
-print('======================');
-
-return position;
+    return await Geolocator.getCurrentPosition(
+      locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
+    );
   }
 }

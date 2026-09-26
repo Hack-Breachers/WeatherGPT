@@ -17,7 +17,6 @@ def get_locations(db: Session = Depends(get_db)):
 
     return locations
 
-
 @router.post("/", response_model=LocationResponse)
 def create_location(
     location: LocationCreate,
