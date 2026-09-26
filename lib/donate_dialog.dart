@@ -13,7 +13,8 @@ class _DonateReliefDialogState extends State<DonateReliefDialog> {
 
   // Monetary state
   int _selectedAmount = 1000;
-  final TextEditingController _customAmountCtrl = TextEditingController(text: "1000");
+  final TextEditingController _customAmountCtrl =
+      TextEditingController(text: "1000");
 
   // Supplies state
   final Map<String, TextEditingController> _supplyControllers = {
@@ -27,96 +28,160 @@ class _DonateReliefDialogState extends State<DonateReliefDialog> {
   @override
   void dispose() {
     _customAmountCtrl.dispose();
-    for (var ctrl in _supplyControllers.values) {
+
+    for (final ctrl in _supplyControllers.values) {
       ctrl.dispose();
     }
+
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final screenHeight = MediaQuery.of(context).size.height;
+
+    // Keep the dialog inside the phone's available width.
+    final dialogWidth =
+        screenWidth - 24 < 540 ? screenWidth - 24 : 540.0;
+
+    // Reduce inner padding slightly on very narrow phones.
+    final dialogPadding = screenWidth < 380 ? 16.0 : 22.0;
+
     return Dialog(
       backgroundColor: Colors.transparent,
-      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      insetPadding: const EdgeInsets.symmetric(
+        horizontal: 12,
+        vertical: 20,
+      ),
       child: Container(
-        width: 540,
+        width: dialogWidth,
         constraints: BoxConstraints(
-          maxHeight: MediaQuery.of(context).size.height * 0.90,
+          maxHeight: screenHeight * 0.90,
         ),
-        padding: const EdgeInsets.all(22),
+        padding: EdgeInsets.all(dialogPadding),
         decoration: BoxDecoration(
           color: const Color(0xFF0F172A),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: const Color(0xFF1E293B)),
+          border: Border.all(
+            color: const Color(0xFF1E293B),
+          ),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withOpacity(0.65),
               blurRadius: 28,
               offset: const Offset(0, 10),
-            )
+            ),
           ],
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Modal Header
+            // ==========================================
+            // MODAL HEADER
+            // ==========================================
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                Row(
-                  children: const [
-                    Icon(Icons.volunteer_activism_outlined, color: Color(0xFF38BDF8), size: 20),
-                    SizedBox(width: 8),
-                    Text(
-                      "Donate to Cyclone Relief",
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
+                Expanded(
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.volunteer_activism_outlined,
+                        color: Color(0xFF38BDF8),
+                        size: 20,
                       ),
-                    ),
-                  ],
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          "Donate to Cyclone Relief",
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
+                const SizedBox(width: 8),
                 IconButton(
-                  icon: const Icon(Icons.close, color: Colors.grey, size: 20),
+                  icon: const Icon(
+                    Icons.close,
+                    color: Colors.grey,
+                    size: 20,
+                  ),
                   padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
+                  constraints: const BoxConstraints(
+                    minWidth: 32,
+                    minHeight: 32,
+                  ),
                   onPressed: () => Navigator.pop(context),
                 ),
               ],
             ),
+
             const SizedBox(height: 4),
+
             const Text(
               "All contributions route through verified state relief channels.",
-              style: TextStyle(fontSize: 11.5, color: Color(0xFF94A3B8)),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 11.5,
+                color: Color(0xFF94A3B8),
+              ),
             ),
+
             const SizedBox(height: 18),
 
-            // Segmented 3-Way Tab Switcher (Monetary | Supplies | Ledger)
+            // ==========================================
+            // SEGMENTED 3-WAY TAB SWITCHER
+            // ==========================================
             Container(
               padding: const EdgeInsets.all(3),
               decoration: BoxDecoration(
                 color: const Color(0xFF070C18),
                 borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: const Color(0xFF1E293B)),
+                border: Border.all(
+                  color: const Color(0xFF1E293B),
+                ),
               ),
               child: Row(
                 children: [
-                  _tabSegment(title: "Monetary", index: 0),
-                  _tabSegment(title: "Supplies", index: 1),
-                  _tabSegment(title: "Ledger", index: 2),
+                  _tabSegment(
+                    title: "Monetary",
+                    index: 0,
+                  ),
+                  _tabSegment(
+                    title: "Supplies",
+                    index: 1,
+                  ),
+                  _tabSegment(
+                    title: "Ledger",
+                    index: 2,
+                  ),
                 ],
               ),
             ),
+
             const SizedBox(height: 16),
 
-            // Dynamic Tab View
+            // ==========================================
+            // DYNAMIC TAB VIEW
+            // ==========================================
             Flexible(
               child: SingleChildScrollView(
+                physics: const BouncingScrollPhysics(),
                 child: _activeTab == 0
                     ? _buildMonetaryTab()
-                    : (_activeTab == 1 ? _buildSuppliesTab() : _buildLedgerTab()),
+                    : (_activeTab == 1
+                        ? _buildSuppliesTab()
+                        : _buildLedgerTab()),
               ),
             ),
           ],
@@ -125,24 +190,45 @@ class _DonateReliefDialogState extends State<DonateReliefDialog> {
     );
   }
 
-  Widget _tabSegment({required String title, required int index}) {
+  // ==========================================
+  // TAB SEGMENT
+  // ==========================================
+  Widget _tabSegment({
+    required String title,
+    required int index,
+  }) {
     final isSelected = _activeTab == index;
+
     return Expanded(
       child: GestureDetector(
-        onTap: () => setState(() => _activeTab = index),
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          setState(() {
+            _activeTab = index;
+          });
+        },
         child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 8),
+          padding: const EdgeInsets.symmetric(
+            vertical: 8,
+            horizontal: 4,
+          ),
           decoration: BoxDecoration(
-            color: isSelected ? const Color(0xFF1E293B) : Colors.transparent,
+            color: isSelected
+                ? const Color(0xFF1E293B)
+                : Colors.transparent,
             borderRadius: BorderRadius.circular(16),
           ),
           child: Text(
             title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 12,
-              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-              color: isSelected ? Colors.white : Colors.grey,
+              fontWeight:
+                  isSelected ? FontWeight.bold : FontWeight.normal,
+              color:
+                  isSelected ? Colors.white : Colors.grey,
             ),
           ),
         ),
@@ -157,76 +243,136 @@ class _DonateReliefDialogState extends State<DonateReliefDialog> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // ------------------------------------------
         // Relief Fund Routing Badge
+        // ------------------------------------------
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: 10,
+          ),
           decoration: BoxDecoration(
             color: const Color(0xFF070C18),
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: const Color(0xFF1E293B)),
+            border: Border.all(
+              color: const Color(0xFF1E293B),
+            ),
           ),
           child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Row(
-                children: const [
-                  Icon(Icons.account_balance_outlined, color: Color(0xFF38BDF8), size: 16),
-                  SizedBox(width: 8),
-                  Text(
-                    "Routing to Chief Minister's / PM National Relief Fund",
-                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: Color(0xFFCBD5E1)),
-                  ),
-                ],
+              const Icon(
+                Icons.account_balance_outlined,
+                color: Color(0xFF38BDF8),
+                size: 16,
               ),
+              const SizedBox(width: 8),
+
+              // This Expanded is the important overflow fix.
+              Expanded(
+                child: Text(
+                  "Routing to Chief Minister's / PM National Relief Fund",
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                    color: Color(0xFFCBD5E1),
+                  ),
+                ),
+              ),
+
+              const SizedBox(width: 6),
+
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 6,
+                  vertical: 3,
+                ),
                 decoration: BoxDecoration(
                   color: const Color(0xFF1E293B),
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: const Text(
                   "80G eligible",
-                  style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.bold, color: Color(0xFF94A3B8)),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF94A3B8),
+                  ),
                 ),
               ),
             ],
           ),
         ),
+
         const SizedBox(height: 14),
 
-        // Amount Selectors (₹500, ₹1,000, ₹5,000, Custom)
+        // ------------------------------------------
+        // Amount Selectors
+        // ------------------------------------------
         Row(
           children: [
-            _amountButton(500),
-            const SizedBox(width: 8),
-            _amountButton(1000),
-            const SizedBox(width: 8),
-            _amountButton(5000),
-            const SizedBox(width: 8),
+            Expanded(
+              child: _amountButton(500),
+            ),
+            const SizedBox(width: 6),
+
+            Expanded(
+              child: _amountButton(1000),
+            ),
+            const SizedBox(width: 6),
+
+            Expanded(
+              child: _amountButton(5000),
+            ),
+            const SizedBox(width: 6),
+
             Expanded(
               child: Container(
                 height: 38,
-                padding: const EdgeInsets.symmetric(horizontal: 10),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 8,
+                ),
                 decoration: BoxDecoration(
                   color: const Color(0xFF070C18),
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: const Color(0xFF1E293B)),
+                  border: Border.all(
+                    color: const Color(0xFF1E293B),
+                  ),
                 ),
                 child: TextField(
                   controller: _customAmountCtrl,
                   keyboardType: TextInputType.number,
-                  style: const TextStyle(fontSize: 12.5, color: Colors.white, fontFamily: 'monospace'),
+                  textAlign: TextAlign.center,
+                  maxLines: 1,
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    color: Colors.white,
+                    fontFamily: 'monospace',
+                  ),
                   decoration: const InputDecoration(
                     isDense: true,
-                    contentPadding: EdgeInsets.symmetric(vertical: 10),
+                    contentPadding: EdgeInsets.symmetric(
+                      vertical: 10,
+                    ),
                     border: InputBorder.none,
                     hintText: "Other",
-                    hintStyle: TextStyle(color: Colors.grey, fontSize: 11),
+                    hintStyle: TextStyle(
+                      color: Colors.grey,
+                      fontSize: 11,
+                    ),
                   ),
                   onChanged: (val) {
                     final parsed = int.tryParse(val);
+
                     if (parsed != null) {
-                      setState(() => _selectedAmount = parsed);
+                      setState(() {
+                        _selectedAmount = parsed;
+                      });
                     }
                   },
                 ),
@@ -234,69 +380,107 @@ class _DonateReliefDialogState extends State<DonateReliefDialog> {
             ),
           ],
         ),
+
         const SizedBox(height: 16),
 
+        // ------------------------------------------
         // QR Code Container
-        Center(
-          child: Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: const Color(0xFF070C18),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: const Color(0xFF1E293B)),
+        // ------------------------------------------
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: const Color(0xFF070C18),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: const Color(0xFF1E293B),
             ),
-            child: Column(
-              children: [
-                Container(
-                  width: 130,
-                  height: 130,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: CustomPaint(
-                    size: const Size(130, 130),
-                    painter: _MockQrPatternPainter(),
-                  ),
+          ),
+          child: Column(
+            children: [
+              Container(
+                width: 130,
+                height: 130,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(10),
                 ),
-                const SizedBox(height: 8),
-                const Text(
-                  "wxrelief@upi · scan with GPay / PhonePe",
-                  style: TextStyle(fontSize: 10, fontFamily: 'monospace', color: Color(0xFF64748B)),
+                child: CustomPaint(
+                  size: const Size(130, 130),
+                  painter: _MockQrPatternPainter(),
                 ),
-              ],
-            ),
+              ),
+
+              const SizedBox(height: 8),
+
+              // Prevent long UPI text from overflowing.
+              Text(
+                "wxrelief@upi · scan with GPay / PhonePe",
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 10,
+                  fontFamily: 'monospace',
+                  color: Color(0xFF64748B),
+                ),
+              ),
+            ],
           ),
         ),
+
         const SizedBox(height: 18),
 
+        // ------------------------------------------
         // Pay CTA Button
-        ElevatedButton(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF0284C7),
-            minimumSize: const Size(double.infinity, 44),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          ),
-          onPressed: () {
-            Navigator.pop(context);
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                backgroundColor: const Color(0xFF0284C7),
-                content: Text("Redirecting to UPI gateway for ₹$_selectedAmount..."),
+        // ------------------------------------------
+        SizedBox(
+          width: double.infinity,
+          height: 44,
+          child: ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF0284C7),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
               ),
-            );
-          },
-          child: Text(
-            "Pay ₹$_selectedAmount via UPI",
-            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.white),
+            ),
+            onPressed: () {
+              final amount = _selectedAmount;
+
+              Navigator.pop(context);
+
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  backgroundColor: const Color(0xFF0284C7),
+                  content: Text(
+                    "Redirecting to UPI gateway for ₹$amount...",
+                  ),
+                ),
+              );
+            },
+            child: Text(
+              "Pay ₹$_selectedAmount via UPI",
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+            ),
           ),
         ),
       ],
     );
   }
 
+  // ==========================================
+  // AMOUNT BUTTON
+  // ==========================================
   Widget _amountButton(int amount) {
     final isSelected = _selectedAmount == amount;
+
     return InkWell(
       borderRadius: BorderRadius.circular(8),
       onTap: () {
@@ -306,20 +490,35 @@ class _DonateReliefDialogState extends State<DonateReliefDialog> {
         });
       },
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+        height: 38,
+        width: double.infinity,
+        alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(
+          horizontal: 4,
+          vertical: 9,
+        ),
         decoration: BoxDecoration(
-          color: isSelected ? const Color(0xFF0284C7) : const Color(0xFF070C18),
+          color: isSelected
+              ? const Color(0xFF0284C7)
+              : const Color(0xFF070C18),
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-            color: isSelected ? const Color(0xFF38BDF8) : const Color(0xFF1E293B),
+            color: isSelected
+                ? const Color(0xFF38BDF8)
+                : const Color(0xFF1E293B),
           ),
         ),
         child: Text(
           "₹${amount >= 1000 ? '${(amount / 1000).toStringAsFixed(0)},000' : amount}",
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
           style: TextStyle(
             fontSize: 12,
             fontWeight: FontWeight.bold,
-            color: isSelected ? Colors.white : const Color(0xFF94A3B8),
+            color: isSelected
+                ? Colors.white
+                : const Color(0xFF94A3B8),
           ),
         ),
       ),
@@ -332,67 +531,110 @@ class _DonateReliefDialogState extends State<DonateReliefDialog> {
   Widget _buildSuppliesTab() {
     return Column(
       children: [
-        ..._supplyControllers.keys.map((title) => Container(
-              margin: const EdgeInsets.only(bottom: 10),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-              decoration: BoxDecoration(
-                color: const Color(0xFF070C18),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: const Color(0xFF1E293B)),
+        ..._supplyControllers.keys.map(
+          (title) => Container(
+            width: double.infinity,
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.symmetric(
+              horizontal: 14,
+              vertical: 6,
+            ),
+            decoration: BoxDecoration(
+              color: const Color(0xFF070C18),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: const Color(0xFF1E293B),
               ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Expanded(
-                    child: Text(
-                      title,
-                      style: const TextStyle(fontSize: 12.5, color: Color(0xFFE2E8F0)),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      color: Color(0xFFE2E8F0),
                     ),
                   ),
-                  SizedBox(
-                    width: 70,
-                    height: 34,
-                    child: TextField(
-                      controller: _supplyControllers[title],
-                      keyboardType: TextInputType.number,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(fontSize: 12, color: Colors.white, fontFamily: 'monospace'),
-                      decoration: InputDecoration(
-                        isDense: true,
-                        hintText: "Qty",
-                        hintStyle: const TextStyle(color: Color(0xFF64748B), fontSize: 11),
-                        contentPadding: const EdgeInsets.symmetric(vertical: 8),
-                        filled: true,
-                        fillColor: const Color(0xFF0F172A),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(6),
-                          borderSide: const BorderSide(color: Color(0xFF1E293B)),
+                ),
+
+                const SizedBox(width: 10),
+
+                SizedBox(
+                  width: 70,
+                  height: 34,
+                  child: TextField(
+                    controller: _supplyControllers[title],
+                    keyboardType: TextInputType.number,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Colors.white,
+                      fontFamily: 'monospace',
+                    ),
+                    decoration: InputDecoration(
+                      isDense: true,
+                      hintText: "Qty",
+                      hintStyle: const TextStyle(
+                        color: Color(0xFF64748B),
+                        fontSize: 11,
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        vertical: 8,
+                      ),
+                      filled: true,
+                      fillColor: const Color(0xFF0F172A),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(6),
+                        borderSide: const BorderSide(
+                          color: Color(0xFF1E293B),
                         ),
                       ),
                     ),
-                  )
-                ],
-              ),
-            )),
-        const SizedBox(height: 14),
-        ElevatedButton(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF0284C7),
-            minimumSize: const Size(double.infinity, 44),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                ),
+              ],
+            ),
           ),
-          onPressed: () {
-            Navigator.pop(context);
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                backgroundColor: Color(0xFF059669),
-                content: Text("Supplies pledge registered. Staging instructions sent via SMS."),
+        ),
+
+        const SizedBox(height: 14),
+
+        SizedBox(
+          width: double.infinity,
+          height: 44,
+          child: ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF0284C7),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
               ),
-            );
-          },
-          child: const Text(
-            "Pledge supplies",
-            style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.white),
+            ),
+            onPressed: () {
+              Navigator.pop(context);
+
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  backgroundColor: Color(0xFF059669),
+                  content: Text(
+                    "Supplies pledge registered. "
+                    "Staging instructions sent via SMS.",
+                  ),
+                ),
+              );
+            },
+            child: const Text(
+              "Pledge supplies",
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+            ),
           ),
         ),
       ],
@@ -412,38 +654,58 @@ class _DonateReliefDialogState extends State<DonateReliefDialog> {
           progress: 0.64,
           subtext: "Deployed ₹3.11 Cr (64%)",
         ),
+
         const SizedBox(height: 12),
+
         _ledgerCard(
           title: "Food packets dispatched",
           stat: "128,400",
           progress: 0.85,
           subtext: "Verified at 46 shelters",
         ),
+
         const SizedBox(height: 12),
+
         _ledgerCard(
           title: "Water crates delivered",
           stat: "9,120",
           progress: 0.42,
           subtext: "Zone 3 deficit remains",
         ),
+
         const SizedBox(height: 16),
 
+        // ------------------------------------------
         // Signed verification footer box
+        // ------------------------------------------
         Container(
+          width: double.infinity,
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
             color: const Color(0xFF064E3B).withOpacity(0.2),
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: const Color(0xFF059669).withOpacity(0.4)),
+            border: Border.all(
+              color: const Color(0xFF059669).withOpacity(0.4),
+            ),
           ),
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: const [
-              Icon(Icons.verified_outlined, color: Color(0xFF34D399), size: 16),
+              Icon(
+                Icons.verified_outlined,
+                color: Color(0xFF34D399),
+                size: 16,
+              ),
               SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  "Every dispatch is signed by a district officer and published to this public ledger within 30 minutes.",
-                  style: TextStyle(fontSize: 10.5, color: Color(0xFF34D399), height: 1.3),
+                  "Every dispatch is signed by a district officer and "
+                  "published to this public ledger within 30 minutes.",
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    color: Color(0xFF34D399),
+                    height: 1.3,
+                  ),
                 ),
               ),
             ],
@@ -453,6 +715,9 @@ class _DonateReliefDialogState extends State<DonateReliefDialog> {
     );
   }
 
+  // ==========================================
+  // LEDGER CARD
+  // ==========================================
   Widget _ledgerCard({
     required String title,
     required String stat,
@@ -460,57 +725,111 @@ class _DonateReliefDialogState extends State<DonateReliefDialog> {
     required String subtext,
   }) {
     return Container(
+      width: double.infinity,
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: const Color(0xFF070C18),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF1E293B)),
+        border: Border.all(
+          color: const Color(0xFF1E293B),
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(title, style: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8))),
-              Text(stat,
+              Expanded(
+                child: Text(
+                  title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                      fontSize: 14, fontWeight: FontWeight.bold, fontFamily: 'monospace', color: Colors.white)),
+                    fontSize: 12,
+                    color: Color(0xFF94A3B8),
+                  ),
+                ),
+              ),
+
+              const SizedBox(width: 10),
+
+              Flexible(
+                child: Text(
+                  stat,
+                  textAlign: TextAlign.right,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    fontFamily: 'monospace',
+                    color: Colors.white,
+                  ),
+                ),
+              ),
             ],
           ),
+
           const SizedBox(height: 10),
+
           ClipRRect(
             borderRadius: BorderRadius.circular(4),
             child: LinearProgressIndicator(
               value: progress,
               minHeight: 5,
               backgroundColor: const Color(0xFF1E293B),
-              valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF0284C7)),
+              valueColor: const AlwaysStoppedAnimation<Color>(
+                Color(0xFF0284C7),
+              ),
             ),
           ),
+
           const SizedBox(height: 8),
-          Text(subtext, style: const TextStyle(fontSize: 10, fontFamily: 'monospace', color: Color(0xFF64748B))),
+
+          Text(
+            subtext,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 10,
+              fontFamily: 'monospace',
+              color: Color(0xFF64748B),
+            ),
+          ),
         ],
       ),
     );
   }
 }
 
-// Renders the stylized QR grid representation
+// ==========================================
+// MOCK QR PATTERN PAINTER
+// ==========================================
 class _MockQrPatternPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()..color = const Color(0xFF070C18);
+    final paint = Paint()
+      ..color = const Color(0xFF070C18);
+
     const int grid = 9;
     final double step = size.width / grid;
 
     for (int r = 0; r < grid; r++) {
       for (int c = 0; c < grid; c++) {
         // Draw corners and pseudo QR data blocks
-        if ((r < 3 && c < 3) || (r < 3 && c > 5) || (r > 5 && c < 3) || (r * c) % 3 == 0) {
+        if ((r < 3 && c < 3) ||
+            (r < 3 && c > 5) ||
+            (r > 5 && c < 3) ||
+            (r * c) % 3 == 0) {
           canvas.drawRRect(
             RRect.fromRectAndRadius(
-              Rect.fromLTWH(c * step + 2, r * step + 2, step - 4, step - 4),
+              Rect.fromLTWH(
+                c * step + 2,
+                r * step + 2,
+                step - 4,
+                step - 4,
+              ),
               const Radius.circular(2),
             ),
             paint,
@@ -521,5 +840,9 @@ class _MockQrPatternPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+  bool shouldRepaint(
+    covariant CustomPainter oldDelegate,
+  ) {
+    return false;
+  }
 }
