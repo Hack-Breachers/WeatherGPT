@@ -4,10 +4,9 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from app.models.location import Location
+from app.database.models import Location, DisasterEvent
 from app.services.geo_service import calculate_distance
 from app.database.dependencies import get_db
-from app.models.disaster_event import DisasterEvent
 from app.providers.factory import get_disaster_provider
 from app.services.disaster_service import save_disaster_events
 from app.services.risk_service import calculate_risk

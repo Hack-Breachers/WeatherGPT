@@ -4,8 +4,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.database.dependencies import get_db
-from app.models.location import Location
-from app.models.disaster_event import DisasterEvent
+from app.database.models import Location, DisasterEvent
 
 from app.providers.weather_provider import OpenMeteoProvider
 

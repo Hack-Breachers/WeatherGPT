@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.database.dependencies import get_db
-from app.models.location import Location
+from app.database.models import Location
 from app.schemas.location import LocationCreate, LocationResponse
 
 router = APIRouter(
