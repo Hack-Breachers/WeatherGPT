@@ -51,30 +51,7 @@ class AppViewNavigator extends StatefulWidget {
 class _AppViewNavigatorState extends State<AppViewNavigator> {
   bool _isGovtView = false;
 
-  // WeatherGPT native background mesh relay bridge.
-  static const MethodChannel _meshRelayChannel =
-      MethodChannel('weathergpt/mesh_relay');
-
-  Future<void> _startMeshRelay() async {
-    try {
-      await _meshRelayChannel.invokeMethod('startRelay');
-      debugPrint('WeatherGPT mesh relay started');
-    } catch (e) {
-      debugPrint('Failed to start mesh relay: $e');
-    }
-  }
   
-
-  @override
-void initState() {
-  super.initState();
-
-  WidgetsBinding.instance.addPostFrameCallback((_) async {
-    debugPrint('WeatherGPT: requesting native mesh relay');
-    await _startMeshRelay();
-    debugPrint('WeatherGPT: native mesh relay request completed');
-  });
-}
 
   @override
   Widget build(BuildContext context) {

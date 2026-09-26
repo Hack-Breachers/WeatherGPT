@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 
-from app.models.disaster_event import DisasterEvent
+from app.database.models import DisasterEvent
 
 
 def save_disaster_events(db: Session, events: list[dict]):
